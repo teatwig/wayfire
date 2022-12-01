@@ -2,7 +2,7 @@ project(
 	'wayfire',
 	'c',
 	'cpp',
-	version: '0.7.4',
+	version: '0.7.5',
 	license: 'MIT',
 	meson_version: '>=0.53.0',
 	default_options: [
