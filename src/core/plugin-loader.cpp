@@ -1,15 +1,11 @@
 #include <sstream>
 #include <algorithm>
-#include <set>
 #include <memory>
 #include <filesystem>
 #include <dlfcn.h>
 
 #include "plugin-loader.hpp"
-#include "wayfire/output-layout.hpp"
-#include "wayfire/output.hpp"
 #include "../core/wm.hpp"
-#include "wayfire/core.hpp"
 #include "wayfire/plugin.hpp"
 #include <wayfire/util/log.hpp>
 
@@ -152,7 +148,6 @@ void wf::plugin_manager_t::reload_dynamic_plugins()
 
     std::stringstream stream(plugin_list);
     std::vector<std::string> next_plugins;
-
     std::vector<std::string> plugin_paths = wf::get_plugin_paths();
 
     std::string plugin_name;
@@ -163,6 +158,14 @@ void wf::plugin_manager_t::reload_dynamic_plugins()
             auto plugin_path = wf::get_plugin_path_for_name(plugin_paths, plugin_name);
             if (plugin_path)
             {
+                auto already_loaded =
+                    std::find(next_plugins.begin(), next_plugins.end(), plugin_path.value());
+                if (already_loaded != next_plugins.end())
+                {
+                    LOGE(plugin_name, " plugin found in the plugin list more than once, skipping");
+                    continue;
+                }
+
                 next_plugins.push_back(plugin_path.value());
             } else
             {
