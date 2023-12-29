@@ -117,6 +117,23 @@ void wf::compositor_core_impl_t::init()
     protocols.export_dmabuf  = wlr_export_dmabuf_manager_v1_create(display);
     protocols.output_manager = wlr_xdg_output_manager_v1_create(display,
         output_layout->get_handle());
+    protocols.drm_v1 = wlr_drm_lease_v1_manager_create(display, backend);
+    drm_lease_request.set_callback([&] (void *data)
+    {
+        auto req = static_cast<wlr_drm_lease_request_v1*>(data);
+        struct wlr_drm_lease_v1 *lease = wlr_drm_lease_request_v1_grant(req);
+        if (!lease)
+        {
+            wlr_drm_lease_request_v1_reject(req);
+        }
+    });
+    if (protocols.drm_v1)
+    {
+        drm_lease_request.connect(&protocols.drm_v1->events.request);
+    } else
+    {
+        LOGE("Failed to create wlr_drm_lease_device_v1; VR will not be available!");
+    }
 
     /* input-inhibit setup */
     protocols.input_inhibit = wlr_input_inhibit_manager_create(display);
