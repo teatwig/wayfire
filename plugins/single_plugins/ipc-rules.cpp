@@ -135,8 +135,10 @@ class ipc_rules_t : public wf::plugin_interface_t, public wf::per_output_tracker
         method_repository->register_method("window-rules/events/watch", on_client_watch);
         method_repository->register_method("window-rules/list-views", list_views);
         method_repository->register_method("window-rules/list-outputs", list_outputs);
+        method_repository->register_method("window-rules/list-wsets", list_wsets);
         method_repository->register_method("window-rules/view-info", get_view_info);
         method_repository->register_method("window-rules/output-info", get_output_info);
+        method_repository->register_method("window-rules/wset-info", get_wset_info);
         method_repository->register_method("window-rules/configure-view", configure_view);
         method_repository->register_method("window-rules/focus-view", focus_view);
         method_repository->register_method("window-rules/get-focused-view", get_focused_view);
@@ -159,8 +161,10 @@ class ipc_rules_t : public wf::plugin_interface_t, public wf::per_output_tracker
         method_repository->unregister_method("window-rules/events/watch");
         method_repository->unregister_method("window-rules/list-views");
         method_repository->unregister_method("window-rules/list-outputs");
+        method_repository->unregister_method("window-rules/list-wsets");
         method_repository->unregister_method("window-rules/view-info");
         method_repository->unregister_method("window-rules/output-info");
+        method_repository->unregister_method("window-rules/wset-info");
         method_repository->unregister_method("window-rules/configure-view");
         method_repository->unregister_method("window-rules/focus-view");
         method_repository->unregister_method("window-rules/get-focused-view");
@@ -173,6 +177,8 @@ class ipc_rules_t : public wf::plugin_interface_t, public wf::per_output_tracker
         output->connect(&_tiled);
         output->connect(&_minimized);
         output->connect(&_fullscreened);
+        output->connect(&on_wset_changed);
+        output->connect(&on_wset_workspace_changed);
     }
 
     void handle_output_removed(wf::output_t *output) override
@@ -272,8 +278,9 @@ class ipc_rules_t : public wf::plugin_interface_t, public wf::per_output_tracker
         nlohmann::json response;
         response["id"]   = o->get_id();
         response["name"] = o->to_string();
-        response["geometry"] = wf::ipc::geometry_to_json(o->get_layout_geometry());
-        response["workarea"] = wf::ipc::geometry_to_json(o->workarea->get_workarea());
+        response["geometry"]   = wf::ipc::geometry_to_json(o->get_layout_geometry());
+        response["workarea"]   = wf::ipc::geometry_to_json(o->workarea->get_workarea());
+        response["wset-index"] = o->wset()->get_index();
         response["workspace"]["x"] = o->wset()->get_current_workspace().x;
         response["workspace"]["y"] = o->wset()->get_current_workspace().y;
         response["workspace"]["grid_width"]  = o->wset()->get_workspace_grid_size().width;
@@ -346,6 +353,46 @@ class ipc_rules_t : public wf::plugin_interface_t, public wf::per_output_tracker
         }
 
         return wf::ipc::json_ok();
+    };
+
+    nlohmann::json wset_to_json(wf::workspace_set_t *wset)
+    {
+        nlohmann::json response;
+        response["index"] = wset->get_index();
+        response["name"]  = wset->to_string();
+
+        auto output = wset->get_attached_output();
+        response["output-id"]   = output ? (int)output->get_id() : -1;
+        response["output-name"] = output ? output->to_string() : "";
+        response["workspace"]["x"] = wset->get_current_workspace().x;
+        response["workspace"]["y"] = wset->get_current_workspace().y;
+        response["workspace"]["grid_width"]  = wset->get_workspace_grid_size().width;
+        response["workspace"]["grid_height"] = wset->get_workspace_grid_size().height;
+        return response;
+    }
+
+    wf::ipc::method_callback list_wsets = [=] (nlohmann::json)
+    {
+        auto response = nlohmann::json::array();
+        for (auto& workspace_set : wf::workspace_set_t::get_all())
+        {
+            response.push_back(wset_to_json(workspace_set.get()));
+        }
+
+        return response;
+    };
+
+    wf::ipc::method_callback get_wset_info = [=] (nlohmann::json data)
+    {
+        WFJSON_EXPECT_FIELD(data, "id", number_integer);
+        auto ws = wf::ipc::find_workspace_set_by_index(data["id"]);
+        if (!ws)
+        {
+            return wf::ipc::json_error("workspace set not found");
+        }
+
+        auto response = wset_to_json(ws);
+        return response;
     };
 
   private:
@@ -436,7 +483,7 @@ class ipc_rules_t : public wf::plugin_interface_t, public wf::per_output_tracker
         send_view_to_subscribes(ev->view, "view-fullscreen");
     };
 
-    wf::signal::connection_t<wf::view_title_changed_signal> on_title_changed   =
+    wf::signal::connection_t<wf::view_title_changed_signal> on_title_changed =
         [=] (wf::view_title_changed_signal *ev)
     {
         send_view_to_subscribes(ev->view, "view-title-changed");
@@ -456,6 +503,28 @@ class ipc_rules_t : public wf::plugin_interface_t, public wf::per_output_tracker
         data["plugin"] = ev->plugin_name;
         data["state"]  = ev->activated;
         data["output"] = ev->output ? (int)ev->output->get_id() : -1;
+        send_event_to_subscribes(data, data["event"]);
+    };
+
+    wf::signal::connection_t<wf::workspace_set_changed_signal> on_wset_changed =
+        [=] (wf::workspace_set_changed_signal *ev)
+    {
+        nlohmann::json data;
+        data["event"]    = "output-wset-changed";
+        data["new-wset"] = ev->new_wset ? (int)ev->new_wset->get_id() : -1;
+        data["output"]   = ev->output ? (int)ev->output->get_id() : -1;
+        send_event_to_subscribes(data, data["event"]);
+    };
+
+    wf::signal::connection_t<wf::workspace_changed_signal> on_wset_workspace_changed =
+        [=] (wf::workspace_changed_signal *ev)
+    {
+        nlohmann::json data;
+        data["event"] = "wset-workspace-changed";
+        data["previous-workspace"] = wf::ipc::point_to_json(ev->old_viewport);
+        data["new-workspace"] = wf::ipc::point_to_json(ev->new_viewport);
+        data["output"] = ev->output ? (int)ev->output->get_id() : -1;
+        data["wset"]   = (ev->output && ev->output->wset()) ? (int)ev->output->wset()->get_id() : -1;
         send_event_to_subscribes(data, data["event"]);
     };
 
@@ -524,7 +593,9 @@ class ipc_rules_t : public wf::plugin_interface_t, public wf::per_output_tracker
         description["fullscreen"]  = toplevel ? toplevel->pending_fullscreen() : false;
         description["minimized"]   = toplevel ? toplevel->minimized : false;
         description["activated"]   = toplevel ? toplevel->activated : false;
-        description["focusable"]   = view->is_focusable();
+        description["sticky"]     = toplevel ? toplevel->sticky : false;
+        description["wset-index"] = toplevel && toplevel->get_wset() ? toplevel->get_wset()->get_index() : -1;
+        description["focusable"]  = view->is_focusable();
         description["type"] = get_view_type(view);
 
         return description;
