@@ -6,7 +6,7 @@
 #include "../animate.hpp"
 
 class FireTransformer;
-struct ParticleSystem;
+class ParticleSystem;
 
 class FireAnimation : public animation_base
 {
