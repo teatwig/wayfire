@@ -107,6 +107,7 @@ class wayfire_scale : public wf::per_output_plugin_instance_t,
     wayfire_toplevel_view last_selected_view;
     std::map<wayfire_toplevel_view, view_scale_data> scale_data;
     wf::option_wrapper_t<int> spacing{"scale/spacing"};
+    wf::option_wrapper_t<int> outer_margin{"scale/outer_margin"};
     wf::option_wrapper_t<bool> middle_click_close{"scale/middle_click_close"};
     wf::option_wrapper_t<double> inactive_alpha{"scale/inactive_alpha"};
     wf::option_wrapper_t<double> minimized_alpha{"scale/minimized_alpha"};
@@ -919,6 +920,10 @@ class wayfire_scale : public wf::per_output_plugin_instance_t,
         filter_views(views);
 
         auto workarea = output->workarea->get_workarea();
+        workarea.x     += outer_margin;
+        workarea.y     += outer_margin;
+        workarea.width -= outer_margin * 2;
+        workarea.height -= outer_margin * 2;
 
         auto sorted_rows = view_sort(views);
         size_t cnt_rows  = sorted_rows.size();

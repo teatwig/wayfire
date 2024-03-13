@@ -46,6 +46,12 @@
 				<default>50</default>
 				<min>0</min>
 			</option>
+			<option name="outer_margin" type="int">
+				<_short>Outer Margin</_short>
+				<_long>The outer margin is the space reserved between the scaled windows and the monitor edges while scale is active.</_long>
+				<default>0</default>
+				<min>0</min>
+			</option>
 			<option name="inactive_alpha" type="double">
 				<_short>Inactive Opacity</_short>
 				<_long>Set the opacity value of the inactive windows.</_long>
