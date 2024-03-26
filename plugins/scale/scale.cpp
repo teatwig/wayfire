@@ -113,6 +113,7 @@ class wayfire_scale : public wf::per_output_plugin_instance_t,
     wf::option_wrapper_t<double> minimized_alpha{"scale/minimized_alpha"};
     wf::option_wrapper_t<bool> allow_scale_zoom{"scale/allow_zoom"};
     wf::option_wrapper_t<bool> include_minimized{"scale/include_minimized"};
+    wf::option_wrapper_t<bool> close_on_new_view{"scale/close_on_new_view"};
 
     /* maximum scale -- 1.0 means we will not "zoom in" on a view */
     const double max_scale_factor = 1.0;
@@ -1092,10 +1093,16 @@ class wayfire_scale : public wf::per_output_plugin_instance_t,
         layout_slots(get_views());
     };
 
-    void handle_new_view(wayfire_toplevel_view view)
+    void handle_new_view(wayfire_toplevel_view view, bool close_scale)
     {
         if (!should_scale_view(view))
         {
+            return;
+        }
+
+        if (close_scale)
+        {
+            deactivate();
             return;
         }
 
@@ -1106,7 +1113,7 @@ class wayfire_scale : public wf::per_output_plugin_instance_t,
     {
         if (auto toplevel = wf::toplevel_cast(ev->view))
         {
-            handle_new_view(toplevel);
+            handle_new_view(toplevel, close_on_new_view);
         }
     };
 
@@ -1518,7 +1525,7 @@ class wayfire_scale_global : public wf::plugin_interface_t,
             auto new_output = ev->view->get_output();
             if (new_output && output_instance.count(new_output) && output_instance[new_output]->active)
             {
-                this->output_instance[ev->view->get_output()]->handle_new_view(toplevel);
+                this->output_instance[ev->view->get_output()]->handle_new_view(toplevel, false);
             }
         }
     };
