@@ -25,6 +25,10 @@
 				<value>fire</value>
 				<_name>Fire</_name>
 			</desc>
+			<desc>
+				<value>zap</value>
+				<_name>Zap</_name>
+			</desc>
 		</option>
 		<option name="close_animation" type="string">
 			<_short>Close animation</_short>
@@ -45,6 +49,10 @@
 			<desc>
 				<value>fire</value>
 				<_name>Fire</_name>
+			</desc>
+			<desc>
+				<value>zap</value>
+				<_name>Zap</_name>
 			</desc>
 		</option>
 		<option name="minimize_animation" type="string">
@@ -137,6 +145,11 @@
 			<_short>Squeezimize duration</_short>
 			<_long>Sets the duration of the squeezimize animation in milliseconds.</_long>
 			<default>150ms linear</default>
+		</option>
+		<option name="zap_duration" type="animation">
+			<_short>Zap duration</_short>
+			<_long>Sets the duration for the zap animation in milliseconds.</_long>
+			<default>250ms linear</default>
 		</option>
 	</plugin>
 </wayfire>
