@@ -29,6 +29,10 @@
 				<value>zap</value>
 				<_name>Zap</_name>
 			</desc>
+			<desc>
+				<value>spin</value>
+				<_name>Spin</_name>
+			</desc>
 		</option>
 		<option name="close_animation" type="string">
 			<_short>Close animation</_short>
@@ -53,6 +57,10 @@
 			<desc>
 				<value>zap</value>
 				<_name>Zap</_name>
+			</desc>
+			<desc>
+				<value>spin</value>
+				<_name>Spin</_name>
 			</desc>
 		</option>
 		<option name="minimize_animation" type="string">
@@ -150,6 +158,16 @@
 			<_short>Zap duration</_short>
 			<_long>Sets the duration for the zap animation in milliseconds.</_long>
 			<default>250ms linear</default>
+		</option>
+		<option name="spin_duration" type="animation">
+			<_short>Spin duration</_short>
+			<_long>Sets the duration for the spin animation in milliseconds.</_long>
+			<default>250ms linear</default>
+		</option>
+		<option name="spin_rotations" type="int">
+			<_short>Spin rotations</_short>
+			<_long>Number of rotations for the spin animation. Negative values reverse the spin direction.</_long>
+			<default>1</default>
 		</option>
 	</plugin>
 </wayfire>
