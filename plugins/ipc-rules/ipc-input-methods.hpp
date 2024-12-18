@@ -35,7 +35,7 @@ class ipc_rules_input_methods_t
           case WLR_INPUT_DEVICE_TOUCH:
             return "touch";
 
-          case WLR_INPUT_DEVICE_TABLET_TOOL:
+          case WLR_INPUT_DEVICE_TABLET:
             return "tablet_tool";
 
           case WLR_INPUT_DEVICE_TABLET_PAD:
@@ -57,8 +57,17 @@ class ipc_rules_input_methods_t
             nlohmann::json d;
             d["id"]     = (intptr_t)device->get_wlr_handle();
             d["name"]   = nonull(device->get_wlr_handle()->name);
-            d["vendor"] = device->get_wlr_handle()->vendor;
-            d["product"] = device->get_wlr_handle()->product;
+            d["vendor"] = "unknown";
+            d["product"] = "unknown";
+            if (wlr_input_device_is_libinput(device->get_wlr_handle()))
+            {
+                if (auto libinput_handle = wlr_libinput_get_device_handle(device->get_wlr_handle()))
+                {
+                    d["vendor"]  = libinput_device_get_id_vendor(libinput_handle);
+                    d["product"] = libinput_device_get_id_product(libinput_handle);
+                }
+            }
+
             d["type"]    = wlr_input_device_type_to_string(device->get_wlr_handle()->type);
             d["enabled"] = device->is_enabled();
             response.push_back(d);
