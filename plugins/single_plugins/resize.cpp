@@ -299,6 +299,58 @@ class wayfire_resize : public wf::per_output_plugin_instance_t, public wf::point
         return gravity;
     }
 
+    wf::dimensions_t calculate_min_size()
+    {
+        // Min size, if not set to something larger, is 1x1 + decoration size
+        wf::dimensions_t min_size = view->toplevel()->get_min_size();
+        min_size.width  = std::max(1, min_size.width);
+        min_size.height = std::max(1, min_size.height);
+        min_size = wf::expand_dimensions_by_margins(min_size,
+            view->toplevel()->pending().margins);
+
+        return min_size;
+    }
+
+    wf::dimensions_t calculate_max_size(wf::dimensions_t min)
+    {
+        // Max size is whatever is set by the client, if not set, then it is MAX_INT
+        wf::dimensions_t max_size = view->toplevel()->get_max_size();
+        if (max_size.width > 0)
+        {
+            max_size.width += view->toplevel()->pending().margins.left +
+                view->toplevel()->pending().margins.right;
+        } else
+        {
+            max_size.width = std::numeric_limits<decltype(max_size.width)>::max();
+        }
+
+        if (max_size.height > 0)
+        {
+            max_size.height += view->toplevel()->pending().margins.top +
+                view->toplevel()->pending().margins.bottom;
+        } else
+        {
+            max_size.height = std::numeric_limits<decltype(max_size.height)>::max();
+        }
+
+        // Sanitize values in case desired.width/height gets negative for example.
+        max_size.width  = std::max(max_size.width, min.width);
+        max_size.height = std::max(max_size.height, min.height);
+
+        return max_size;
+    }
+
+    bool does_shrink(int dx, int dy)
+    {
+        if (std::abs(dx) > std::abs(dy))
+        {
+            return dx < 0;
+        } else
+        {
+            return dy < 0;
+        }
+    }
+
     void input_motion()
     {
         auto input = get_input_coords();
@@ -330,29 +382,59 @@ class wayfire_resize : public wf::per_output_plugin_instance_t, public wf::point
             desired.height += dy;
         }
 
+        auto min_size = calculate_min_size();
+        auto max_size = calculate_max_size(min_size);
+        auto desired_unconstrained = desired;
         if (preserve_aspect)
         {
-            auto bbox = desired;
-            desired.width  = std::min(std::max(bbox.width, 1), (int)(bbox.height * ratio));
-            desired.height = std::min(std::max(bbox.height, 1), (int)(bbox.width / ratio));
-            if (edges & WLR_EDGE_LEFT)
+            float new_ratio = 1.0 * desired.width / desired.height;
+            if ((new_ratio < ratio) ^ does_shrink(desired.width - grabbed_geometry.width,
+                desired.height - grabbed_geometry.height))
             {
-                desired.x += bbox.width - desired.width;
-            }
-
-            if (edges & WLR_EDGE_TOP)
+                // If we do not shrink: the window is taller than it should be, so expand width first.
+                // If we do shrink: the window is wider than it should be, so shrink width first.
+                desired.width = std::clamp(int(desired.height * ratio),
+                    min_size.width, max_size.width);
+                desired.height = std::clamp(int(desired.width / ratio),
+                    min_size.height, max_size.height);
+                // Clamp once more to ensure we fit the min/max sizes.
+                desired.width = std::clamp(int(desired.height * ratio),
+                    min_size.width, max_size.width);
+            } else
             {
-                desired.y += bbox.height - desired.height;
+                // The window is wider than it should be, so expand height first.
+                desired.height = std::clamp(int(desired.width / ratio),
+                    min_size.height, max_size.height);
+                desired.width = std::clamp(int(desired.height * ratio),
+                    min_size.width, max_size.width);
+                // Clamp once more to ensure we fit the min/max sizes.
+                desired.height = std::clamp(int(desired.width / ratio),
+                    min_size.height, max_size.height);
             }
         } else
         {
-            desired.width  = std::max(desired.width, 1);
-            desired.height = std::max(desired.height, 1);
+            desired.width  = std::clamp(desired.width, min_size.width, max_size.width);
+            desired.height = std::clamp(desired.height, min_size.height, max_size.height);
         }
 
-        view->toplevel()->pending().gravity  = calculate_gravity();
-        view->toplevel()->pending().geometry = desired;
-        wf::get_core().tx_manager->schedule_object(view->toplevel());
+        // If we had to change the size due to ratio/min/max constraints, make sure to keep the gravity
+        // correct.
+        if (edges & WLR_EDGE_LEFT)
+        {
+            desired.x += desired_unconstrained.width - desired.width;
+        }
+
+        if (edges & WLR_EDGE_TOP)
+        {
+            desired.y += desired_unconstrained.height - desired.height;
+        }
+
+        if (wf::dimensions(view->toplevel()->pending().geometry) != wf::dimensions(desired))
+        {
+            view->toplevel()->pending().gravity  = calculate_gravity();
+            view->toplevel()->pending().geometry = desired;
+            wf::get_core().tx_manager->schedule_object(view->toplevel());
+        }
     }
 
     void fini() override
