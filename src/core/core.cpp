@@ -424,17 +424,26 @@ std::vector<wayfire_view> wf::compositor_core_t::get_all_views()
     return wf::tracking_allocator_t<view_interface_t>::get().get_all();
 }
 
+/**
+ * Upon successful execution, returns the PID of the child process.
+ * Returns 0 in case of failure.
+ */
 pid_t wf::compositor_core_impl_t::run(std::string command)
 {
     static constexpr size_t READ_END  = 0;
     static constexpr size_t WRITE_END = 1;
-    pid_t pid;
+
     int pipe_fd[2];
-    pipe2(pipe_fd, O_CLOEXEC);
+    int ret = pipe2(pipe_fd, O_CLOEXEC);
+    if (ret == -1)
+    {
+        LOGE("wf::compositor_core_impl_t::run: failed to create pipe2: ", strerror(errno));
+        return 0;
+    }
 
     /* The following is a "hack" for disowning the child processes,
      * otherwise they will simply stay as zombie processes */
-    pid = fork();
+    pid_t pid = fork();
     if (!pid)
     {
         pid = fork();
@@ -464,9 +473,9 @@ pid_t wf::compositor_core_impl_t::run(std::string command)
         } else
         {
             close(pipe_fd[READ_END]);
-            write(pipe_fd[WRITE_END], (void*)(&pid), sizeof(pid));
+            int ret = write(pipe_fd[WRITE_END], (void*)(&pid), sizeof(pid));
             close(pipe_fd[WRITE_END]);
-            _exit(0);
+            _exit(ret != sizeof(pid) ? 1 : 0);
         }
     } else
     {
@@ -475,8 +484,28 @@ pid_t wf::compositor_core_impl_t::run(std::string command)
         int status;
         waitpid(pid, &status, 0);
 
-        pid_t child_pid;
-        read(pipe_fd[READ_END], &child_pid, sizeof(child_pid));
+        // Return 0 if the child process didn't run or didn't exit normally, or returns a non-zero return
+        // value.
+        pid_t child_pid{};
+        if (WIFEXITED(status) && (WEXITSTATUS(status) == 0))
+        {
+            int ret = read(pipe_fd[READ_END], &child_pid, sizeof(child_pid));
+            if (ret != sizeof(child_pid))
+            {
+                // This is consider to be an error (even though theoretically a partial read would require an
+                // attempt to continue).
+                child_pid = 0;
+                if (ret == -1)
+                {
+                    LOGE("wf::compositor_core_impl_t::run(\"", command,
+                        "\"): failed to read PID from pipe end: ", strerror(errno));
+                } else
+                {
+                    LOGE("wf::compositor_core_impl_t::run(\"", command,
+                        "\"): short read of PID from pipe end, got ", std::to_string(ret), " bytes");
+                }
+            }
+        }
 
         close(pipe_fd[READ_END]);
 
