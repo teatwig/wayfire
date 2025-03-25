@@ -40,5 +40,10 @@
 			<_long>Disables window decoration for windows matching the specified criteria.</_long>
 			<default>none</default>
 		</option>
+		<option name="forced_views" type="string">
+			<_short>Force decorations for specified window types</_short>
+			<_long>Forces window decoration for windows matching the specified criteria, overriding client decoration preference.</_long>
+			<default>none</default>
+		</option>
 	</plugin>
 </wayfire>
