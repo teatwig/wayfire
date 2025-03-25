@@ -30,6 +30,7 @@ class ipc_rules_t : public wf::plugin_interface_t,
         method_repository->register_method("window-rules/view-info", get_view_info);
         method_repository->register_method("window-rules/output-info", get_output_info);
         method_repository->register_method("window-rules/wset-info", get_wset_info);
+        method_repository->register_method("window-rules/get_cursor_position", get_cursor_position);
         method_repository->register_method("window-rules/configure-view", configure_view);
         method_repository->register_method("window-rules/focus-view", focus_view);
         method_repository->register_method("window-rules/get-focused-view", get_focused_view);
@@ -53,6 +54,7 @@ class ipc_rules_t : public wf::plugin_interface_t,
         method_repository->unregister_method("window-rules/focus-view");
         method_repository->unregister_method("window-rules/get-focused-view");
         method_repository->unregister_method("window-rules/get-focused-output");
+        method_repository->unregister_method("window-rules/get-cursor-position");
         method_repository->unregister_method("window-rules/close-view");
 
         fini_input_methods(method_repository.get());
@@ -246,6 +248,15 @@ class ipc_rules_t : public wf::plugin_interface_t,
         }
 
         auto response = wset_to_json(ws);
+        return response;
+    };
+
+    wf::ipc::method_callback get_cursor_position = [=] (wf::json_t data) -> wf::json_t
+    {
+        wf::json_t response = wf::ipc::json_ok();
+        auto cursor = wf::get_core().get_cursor_position();
+        response["pos"]["x"] = cursor.x;
+        response["pos"]["y"] = cursor.y;
         return response;
     };
 
