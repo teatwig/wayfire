@@ -90,6 +90,17 @@ bool view_action_interface_t::execute(const std::string & name,
                 _set_geometry_ppt(std::get<1>(geometry), std::get<2>(geometry),
                     std::get<3>(geometry), std::get<4>(geometry));
             }
+        } else if (id == "allowed_actions")
+        {
+            auto arg_aa = _expect_int(args, 1);
+
+            if (std::get<0>(arg_aa))
+            {
+                _view->set_allowed_actions((uint32_t) std::get<1>(arg_aa));
+            } else
+            {
+                LOGE("View action interface: Invalid arguments. Expected 'set allowed_actions int.");
+            }
         } else
         {
             LOGE("View action interface: Unsupported set operation to identifier ",
