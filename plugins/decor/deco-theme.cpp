@@ -65,8 +65,11 @@ cairo_surface_t*decoration_theme_t::render_text(std::string text,
 
     auto cr = cairo_create(surface);
 
+    // TODO make configurable
+    const int margin = height * 0.1;
+
     const float font_scale = 0.8;
-    const float font_size  = height * font_scale;
+    const float font_size  = (height - 2 * margin) * font_scale;
 
     PangoFontDescription *font_desc;
     PangoLayout *layout;
@@ -79,6 +82,7 @@ cairo_surface_t*decoration_theme_t::render_text(std::string text,
     pango_layout_set_font_description(layout, font_desc);
     pango_layout_set_text(layout, text.c_str(), text.size());
     cairo_set_source_rgba(cr, 1, 1, 1, 1);
+    cairo_move_to(cr, margin, margin);
     pango_cairo_show_layout(cr, layout);
     pango_font_description_free(font_desc);
     g_object_unref(layout);
