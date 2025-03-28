@@ -3,44 +3,41 @@
 #include <wayfire/plugins/common/input-grab.hpp>
 #include <wayfire/plugins/common/util.hpp>
 
+#include <wayfire/core.hpp>
+#include <wayfire/debug.hpp>
+#include <wayfire/nonstd/reverse.hpp>
 #include <wayfire/object.hpp>
+#include <wayfire/opengl.hpp>
+#include <wayfire/output.hpp>
+#include <wayfire/per-output-plugin.hpp>
+#include <wayfire/render-manager.hpp>
 #include <wayfire/scene-input.hpp>
 #include <wayfire/scene-operations.hpp>
 #include <wayfire/scene-render.hpp>
 #include <wayfire/scene.hpp>
-#include <wayfire/view-helpers.hpp>
-#include <wayfire/window-manager.hpp>
-#include <wayfire/per-output-plugin.hpp>
-#include <wayfire/opengl.hpp>
-#include <wayfire/view-transform.hpp>
-#include <wayfire/core.hpp>
-#include <wayfire/debug.hpp>
 #include <wayfire/seat.hpp>
-
-#include <wayfire/view.hpp>
-#include <wayfire/output.hpp>
 #include <wayfire/signal-definitions.hpp>
-
-#include <wayfire/render-manager.hpp>
-#include <wayfire/workspace-set.hpp>
-
 #include <wayfire/util/duration.hpp>
-#include <wayfire/nonstd/reverse.hpp>
+#include <wayfire/view-helpers.hpp>
+#include <wayfire/view-transform.hpp>
+#include <wayfire/view.hpp>
+#include <wayfire/window-manager.hpp>
+#include <wayfire/workspace-set.hpp>
 
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
 #include <memory>
 
-constexpr const char *switcher_transformer = "overview-switcher-3d";
-constexpr const char *switcher_transformer_background = "overview-switcher-3d";
+constexpr const char *overview_transformer = "qwf-overview";
+constexpr const char *overview_transformer_background = "qwf-overview";
 constexpr float background_dim_factor = 0.6;
 
 using namespace wf::animation;
-class SwitcherPaintAttribs
+class QWFOverviewPaintAttribs
 {
   public:
-    SwitcherPaintAttribs(const duration_t& duration) :
+    QWFOverviewPaintAttribs(const duration_t& duration) :
         scale_x(duration, 1, 1), scale_y(duration, 1, 1),
         off_x(duration, 0, 0), off_y(duration, 0, 0), off_z(duration, 0, 0),
         rotation(duration, 0, 0), alpha(duration, 1, 1)
@@ -52,12 +49,12 @@ class SwitcherPaintAttribs
     timed_transition_t rotation, alpha;
 };
 
-struct SwitcherView
+struct QWFOverviewView
 {
     wayfire_toplevel_view view;
-    SwitcherPaintAttribs attribs;
+    QWFOverviewPaintAttribs attribs;
 
-    SwitcherView(duration_t& duration) : attribs(duration)
+    QWFOverviewView(duration_t& duration) : attribs(duration)
     {}
 
     /* Make animation start values the current progress of duration */
@@ -86,13 +83,13 @@ struct SwitcherView
     }
 };
 
-class QWFOverviewSwitcher : public wf::per_output_plugin_instance_t, public wf::keyboard_interaction_t
+class QWFOverview : public wf::per_output_plugin_instance_t, public wf::keyboard_interaction_t
 {
-    wf::ipc_activator_t toggle_overview{"overview-switcher/toggle"};
+    wf::ipc_activator_t toggle_overview{"qwf-overview/toggle"};
 
     wf::option_wrapper_t<double> view_thumbnail_scale{
-        "overview-switcher/view_thumbnail_scale"};
-    wf::option_wrapper_t<wf::animation_description_t> speed{"overview-switcher/speed"};
+        "qwf-overview/view_thumbnail_scale"};
+    wf::option_wrapper_t<wf::animation_description_t> speed{"qwf-overview/speed"};
 
     duration_t duration{speed};
     duration_t background_dim_duration{speed};
@@ -101,28 +98,28 @@ class QWFOverviewSwitcher : public wf::per_output_plugin_instance_t, public wf::
     std::unique_ptr<wf::input_grab_t> input_grab;
 
     /* If a view comes before another in this list, it is on top of it */
-    std::vector<SwitcherView> views;
+    std::vector<QWFOverviewView> views;
 
     bool active = false;
 
-    class overview_switcher_render_node_t : public wf::scene::node_t
+    class overview_render_node_t : public wf::scene::node_t
     {
-        class overview_switcher_render_instance_t : public wf::scene::render_instance_t
+        class overview_render_instance_t : public wf::scene::render_instance_t
         {
-            std::shared_ptr<overview_switcher_render_node_t> self;
+            std::shared_ptr<overview_render_node_t> self;
             wf::scene::damage_callback push_damage;
-            wf::signal::connection_t<wf::scene::node_damage_signal> on_switcher_damage =
+            wf::signal::connection_t<wf::scene::node_damage_signal> on_overview_damage =
                 [=] (wf::scene::node_damage_signal *ev)
             {
                 push_damage(ev->region);
             };
 
           public:
-            overview_switcher_render_instance_t(overview_switcher_render_node_t *self, wf::scene::damage_callback push_damage)
+            overview_render_instance_t(overview_render_node_t *self, wf::scene::damage_callback push_damage)
             {
-                this->self = std::dynamic_pointer_cast<overview_switcher_render_node_t>(self->shared_from_this());
+                this->self = std::dynamic_pointer_cast<overview_render_node_t>(self->shared_from_this());
                 this->push_damage = push_damage;
-                self->connect(&on_switcher_damage);
+                self->connect(&on_overview_damage);
             }
 
             void schedule_instructions(
@@ -143,40 +140,40 @@ class QWFOverviewSwitcher : public wf::per_output_plugin_instance_t, public wf::
             void render(const wf::render_target_t& target,
                 const wf::region_t& region, const std::any& tag) override
             {
-                self->switcher->render(target.translated(-wf::origin(self->get_bounding_box())));
+                self->overview->render(target.translated(-wf::origin(self->get_bounding_box())));
             }
         };
 
       public:
-        overview_switcher_render_node_t(QWFOverviewSwitcher *switcher) : node_t(false)
+        overview_render_node_t(QWFOverview *overview) : node_t(false)
         {
-            this->switcher = switcher;
+            this->overview = overview;
         }
 
         virtual void gen_render_instances(
             std::vector<wf::scene::render_instance_uptr>& instances,
             wf::scene::damage_callback push_damage, wf::output_t *shown_on)
         {
-            if (shown_on != this->switcher->output)
+            if (shown_on != this->overview->output)
             {
                 return;
             }
 
-            instances.push_back(std::make_unique<overview_switcher_render_instance_t>(this, push_damage));
+            instances.push_back(std::make_unique<overview_render_instance_t>(this, push_damage));
         }
 
         wf::geometry_t get_bounding_box()
         {
-            return switcher->output->get_layout_geometry();
+            return overview->output->get_layout_geometry();
         }
 
       private:
-        QWFOverviewSwitcher *switcher;
+        QWFOverview *overview;
     };
 
-    std::shared_ptr<overview_switcher_render_node_t> render_node;
+    std::shared_ptr<overview_render_node_t> render_node;
     wf::plugin_activation_data_t grab_interface = {
-        .name = "overview-switcher",
+        .name = "qwf-overview",
         .capabilities = wf::CAPABILITY_MANAGE_COMPOSITOR,
     };
 
@@ -188,8 +185,8 @@ class QWFOverviewSwitcher : public wf::per_output_plugin_instance_t, public wf::
         toggle_overview.set_handler(toggle_overview_cb);
         output->connect(&view_disappeared);
 
-        input_grab = std::make_unique<wf::input_grab_t>("overview-switcher", output, this, nullptr, nullptr);
-        grab_interface.cancel = [=] () {deinit_switcher();};
+        input_grab = std::make_unique<wf::input_grab_t>("qwf-overview", output, this, nullptr, nullptr);
+        grab_interface.cancel = [=] () {deinit_overview();};
     }
 
     wf::ipc_activator_t::handler_t toggle_overview_cb = [=] (wf::output_t *output, wayfire_view)
@@ -197,17 +194,17 @@ class QWFOverviewSwitcher : public wf::per_output_plugin_instance_t, public wf::
         LOGI("qwf: toggle pressed");
 
         // TODO active is toggled within the methods, probably change this later
+        // TODO add a flag that the animation is in progress so we don't trigger things too quickly
+        // TODO display overlay elements such as waybar?
         if (active)
         {
             LOGI("qwf: deactivate");
-            handle_done();
+            return handle_overview_close();
         } else
         {
             LOGI("qwf: activate");
-            handle_switch_request();
+            return handle_overview_open();
         }
-
-        return true;
     };
 
     wf::effect_hook_t pre_hook = [=] ()
@@ -219,7 +216,7 @@ class QWFOverviewSwitcher : public wf::per_output_plugin_instance_t, public wf::
         {
             if (!active)
             {
-                deinit_switcher();
+                deinit_overview();
             }
         }
     };
@@ -258,12 +255,12 @@ class QWFOverviewSwitcher : public wf::per_output_plugin_instance_t, public wf::
             arrange();
         } else
         {
-            cleanup_views([=] (SwitcherView& sv)
+            cleanup_views([=] (QWFOverviewView& sv)
             { return sv.view == view; });
         }
     }
 
-    bool handle_switch_request()
+    bool handle_overview_open()
     {
         if (get_workspace_views().empty())
         {
@@ -273,14 +270,14 @@ class QWFOverviewSwitcher : public wf::per_output_plugin_instance_t, public wf::
         /* If we haven't grabbed, then we haven't setup anything */
         if (!output->is_plugin_active(grab_interface.name))
         {
-            if (!init_switcher())
+            if (!init_overview())
             {
                 return false;
             }
         }
 
         /* Maybe we're still animating the exit animation from a previous
-         * switcher activation? */
+         * overview activation? */
         if (!active)
         {
             active = true;
@@ -292,16 +289,18 @@ class QWFOverviewSwitcher : public wf::per_output_plugin_instance_t, public wf::
         return true;
     }
 
-    /* When switcher is done and starts animating towards end */
-    void handle_done()
+    /* When overview is done and starts animating towards end */
+    bool handle_overview_close()
     {
         dearrange();
         input_grab->ungrab_input();
+
+        return true;
     }
 
-    /* Sets up basic hooks needed while switcher works and/or displays animations.
+    /* Sets up basic hooks needed while overview works and/or displays animations.
      * Also lower any fullscreen views that are active */
-    bool init_switcher()
+    bool init_overview()
     {
         if (!output->activate_plugin(&grab_interface))
         {
@@ -310,13 +309,13 @@ class QWFOverviewSwitcher : public wf::per_output_plugin_instance_t, public wf::
 
         output->render->add_effect(&pre_hook, wf::OUTPUT_EFFECT_PRE);
 
-        render_node = std::make_shared<overview_switcher_render_node_t>(this);
+        render_node = std::make_shared<overview_render_node_t>(this);
         wf::scene::add_front(wf::get_core().scene(), render_node);
         return true;
     }
 
-    /* The reverse of init_switcher */
-    void deinit_switcher()
+    /* The reverse of init_overview */
+    void deinit_overview()
     {
         output->deactivate_plugin(&grab_interface);
 
@@ -326,15 +325,15 @@ class QWFOverviewSwitcher : public wf::per_output_plugin_instance_t, public wf::
 
         for (auto& view : output->wset()->get_views())
         {
-            if (view->has_data("overview-switcher-minimized-showed"))
+            if (view->has_data("qwf-overview-minimized-showed"))
             {
-                view->erase_data("overview-switcher-minimized-showed");
+                view->erase_data("qwf-overview-minimized-showed");
                 wf::scene::set_node_enabled(view->get_root_node(), false);
             }
 
-            view->get_transformed_node()->rem_transformer(switcher_transformer);
+            view->get_transformed_node()->rem_transformer(overview_transformer);
             view->get_transformed_node()->rem_transformer(
-                switcher_transformer_background);
+                overview_transformer_background);
         }
 
         views.clear();
@@ -363,11 +362,11 @@ class QWFOverviewSwitcher : public wf::per_output_plugin_instance_t, public wf::
 
     // TODO this needs some algorithm for placement
     /* Move view animation target to the left */
-    void move(SwitcherView& sv)
+    void move(QWFOverviewView& sv)
     {
         // logic for center view
         //auto og   = output->get_relative_geometry();
-        //auto bbox = wf::view_bounding_box_up_to(sv.view, switcher_transformer);
+        //auto bbox = wf::view_bounding_box_up_to(sv.view, overview_transformer);
 
         //float dx = (og.width / 2.0 - bbox.width / 2.0) - bbox.x;
         //float dy = bbox.y - (og.height / 2.0 - bbox.height / 2.0);
@@ -456,10 +455,10 @@ class QWFOverviewSwitcher : public wf::per_output_plugin_instance_t, public wf::
 
         for (auto v : ws_views)
         {
-            views.push_back(create_switcher_view(v));
+            views.push_back(create_overview_view(v));
         }
 
-        std::sort(views.begin(), views.end(), [] (SwitcherView& a, SwitcherView& b)
+        std::sort(views.begin(), views.end(), [] (QWFOverviewView& a, QWFOverviewView& b)
         {
             return wf::get_focus_timestamp(a.view) > wf::get_focus_timestamp(b.view);
         });
@@ -513,40 +512,40 @@ class QWFOverviewSwitcher : public wf::per_output_plugin_instance_t, public wf::
             if (dim == 1.0)
             {
                 view->get_transformed_node()->rem_transformer(
-                    switcher_transformer_background);
+                    overview_transformer_background);
             } else
             {
                 auto tr =
                     wf::ensure_named_transformer<wf::scene::view_3d_transformer_t>(
-                        view, wf::TRANSFORMER_3D, switcher_transformer_background,
+                        view, wf::TRANSFORMER_3D, overview_transformer_background,
                         view);
                 tr->color[0] = tr->color[1] = tr->color[2] = dim;
             }
         }
     }
 
-    SwitcherView create_switcher_view(wayfire_toplevel_view view)
+    QWFOverviewView create_overview_view(wayfire_toplevel_view view)
     {
         /* we add a view transform if there isn't any.
          *
          * Note that a view might be visible on more than 1 place, so damage
          * tracking doesn't work reliably. To circumvent this, we simply damage
          * the whole output */
-        if (!view->get_transformed_node()->get_transformer(switcher_transformer))
+        if (!view->get_transformed_node()->get_transformer(overview_transformer))
         {
             if (view->minimized)
             {
                 wf::scene::set_node_enabled(view->get_root_node(), true);
                 view->store_data(std::make_unique<wf::custom_data_t>(),
-                    "overview-switcher-minimized-showed");
+                    "qwf-overview-minimized-showed");
             }
 
             view->get_transformed_node()->add_transformer(
                 std::make_shared<wf::scene::view_3d_transformer_t>(view),
-                wf::TRANSFORMER_3D, switcher_transformer);
+                wf::TRANSFORMER_3D, overview_transformer);
         }
 
-        SwitcherView sw{duration};
+        QWFOverviewView sw{duration};
         sw.view     = view;
 
         return sw;
@@ -565,10 +564,10 @@ class QWFOverviewSwitcher : public wf::per_output_plugin_instance_t, public wf::
         wf::scene::run_render_pass(params, 0);
     }
 
-    void render_view(const SwitcherView& sv, const wf::render_target_t& buffer)
+    void render_view(const QWFOverviewView& sv, const wf::render_target_t& buffer)
     {
         auto transform = sv.view->get_transformed_node()
-            ->get_transformer<wf::scene::view_3d_transformer_t>(switcher_transformer);
+            ->get_transformer<wf::scene::view_3d_transformer_t>(overview_transformer);
         assert(transform);
 
         transform->translation = glm::translate(glm::mat4(1.0),
@@ -608,7 +607,7 @@ class QWFOverviewSwitcher : public wf::per_output_plugin_instance_t, public wf::
 
     /* delete all views matching the given criteria, skipping the first "start" views
      * */
-    void cleanup_views(std::function<bool(SwitcherView&)> criteria)
+    void cleanup_views(std::function<bool(QWFOverviewView&)> criteria)
     {
         auto it = views.begin();
         while (it != views.end())
@@ -628,9 +627,9 @@ class QWFOverviewSwitcher : public wf::per_output_plugin_instance_t, public wf::
         if (output->is_plugin_active(grab_interface.name))
         {
             input_grab->ungrab_input();
-            deinit_switcher();
+            deinit_overview();
         }
     }
 };
 
-DECLARE_WAYFIRE_PLUGIN(wf::per_output_plugin_t<QWFOverviewSwitcher>);
+DECLARE_WAYFIRE_PLUGIN(wf::per_output_plugin_t<QWFOverview>);
