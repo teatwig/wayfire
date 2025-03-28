@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<wayfire>
+	<plugin name="overview-switcher">
+		<_short>Overview Switcher</_short>
+		<_long>A plugin to change active window with an animation.</_long>
+		<category>Window Management</category>
+		<!-- Key-bindings -->
+		<option name="toggle" type="activator">
+			<_short>Toggle</_short>
+			<_long>Toggles the overview with the specified activator.</_long>
+			<default>&lt;super&gt;</default>
+		</option>
+		<!-- Effects -->
+		<option name="speed" type="animation">
+			<_short>Duration</_short>
+			<_long>Sets the duration of the animation in milliseconds.</_long>
+			<default>500</default>
+		</option>
+		<option name="view_thumbnail_scale" type="double">
+			<_short>Thumbnail size</_short>
+			<_long>Sets the thumbnail size.</_long>
+			<default>1.0</default>
+		</option>
+	</plugin>
+</wayfire>
