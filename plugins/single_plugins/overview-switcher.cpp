@@ -1,20 +1,21 @@
-#include "wayfire/object.hpp"
-#include "wayfire/plugins/common/input-grab.hpp"
-#include "wayfire/scene-input.hpp"
-#include "wayfire/scene-operations.hpp"
-#include "wayfire/scene-render.hpp"
-#include "wayfire/scene.hpp"
-#include "wayfire/view-helpers.hpp"
+#include "plugins/ipc/ipc-activator.hpp"
+
+#include <wayfire/plugins/common/input-grab.hpp>
+#include <wayfire/plugins/common/util.hpp>
+
+#include <wayfire/object.hpp>
+#include <wayfire/scene-input.hpp>
+#include <wayfire/scene-operations.hpp>
+#include <wayfire/scene-render.hpp>
+#include <wayfire/scene.hpp>
+#include <wayfire/view-helpers.hpp>
 #include <wayfire/window-manager.hpp>
-#include <memory>
 #include <wayfire/per-output-plugin.hpp>
 #include <wayfire/opengl.hpp>
 #include <wayfire/view-transform.hpp>
 #include <wayfire/core.hpp>
 #include <wayfire/debug.hpp>
-#include <wayfire/plugins/common/util.hpp>
 #include <wayfire/seat.hpp>
-#include "plugins/ipc/ipc-activator.hpp"
 
 #include <wayfire/view.hpp>
 #include <wayfire/output.hpp>
@@ -25,10 +26,11 @@
 
 #include <wayfire/util/duration.hpp>
 #include <wayfire/nonstd/reverse.hpp>
+
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
-#include <set>
+#include <memory>
 
 constexpr const char *switcher_transformer = "overview-switcher-3d";
 constexpr const char *switcher_transformer_background = "overview-switcher-3d";
@@ -50,19 +52,11 @@ class SwitcherPaintAttribs
     timed_transition_t rotation, alpha;
 };
 
-enum SwitcherViewPosition
-{
-    SWITCHER_POSITION_LEFT   = 0,
-    SWITCHER_POSITION_CENTER = 1,
-    SWITCHER_POSITION_RIGHT  = 2,
-};
-
 struct SwitcherView
 {
     wayfire_toplevel_view view;
     SwitcherPaintAttribs attribs;
 
-    int position;
     SwitcherView(duration_t& duration) : attribs(duration)
     {}
 
@@ -109,8 +103,6 @@ class QWFOverviewSwitcher : public wf::per_output_plugin_instance_t, public wf::
     /* If a view comes before another in this list, it is on top of it */
     std::vector<SwitcherView> views;
 
-    // the modifiers which were used to activate switcher
-    uint32_t activating_modifiers = 0;
     bool active = false;
 
     class overview_switcher_render_node_t : public wf::scene::node_t
@@ -212,7 +204,7 @@ class QWFOverviewSwitcher : public wf::per_output_plugin_instance_t, public wf::
         } else
         {
             LOGI("qwf: activate");
-            handle_switch_request(1);
+            handle_switch_request();
         }
 
         return true;
@@ -271,7 +263,7 @@ class QWFOverviewSwitcher : public wf::per_output_plugin_instance_t, public wf::
         }
     }
 
-    bool handle_switch_request(int dir)
+    bool handle_switch_request()
     {
         if (get_workspace_views().empty())
         {
@@ -295,7 +287,6 @@ class QWFOverviewSwitcher : public wf::per_output_plugin_instance_t, public wf::
             input_grab->grab_input(wf::scene::layer::OVERLAY);
 
             arrange();
-            activating_modifiers = wf::get_core().seat->get_keyboard_modifiers();
         }
 
         return true;
@@ -370,9 +361,9 @@ class QWFOverviewSwitcher : public wf::per_output_plugin_instance_t, public wf::
         return -1.0;
     }
 
-    /* Move view animation target to the left
-     * @param dir -1 for left, 1 for right */
-    void move(SwitcherView& sv, int dir)
+    // TODO this needs some algorithm for placement
+    /* Move view animation target to the left */
+    void move(SwitcherView& sv)
     {
         // logic for center view
         //auto og   = output->get_relative_geometry();
@@ -392,31 +383,18 @@ class QWFOverviewSwitcher : public wf::per_output_plugin_instance_t, public wf::
         //    sv.attribs.off_x.end + get_center_offset() * dir);
         //sv.attribs.off_y.restart_same_end();
 
-        float z_sign = 0;
-        if (sv.position == SWITCHER_POSITION_CENTER)
-        {
-            // Move from center to either left or right, so backwards
-            z_sign = 1;
-        } else
-        {
-            // Not from center, doesn't expire -> comes to the center
-            z_sign = -1;
-        }
-
         // these are timed_transition_t
         // restart_with_end leaves the current state and only sets the end
 
         sv.attribs.off_z.restart_with_end(
-            sv.attribs.off_z.end + get_z_offset() * z_sign);
+            sv.attribs.off_z.end + get_z_offset());
 
         /* scale views that aren't in the center */
         sv.attribs.scale_x.restart_with_end(
-            sv.attribs.scale_x.end * std::pow(get_back_scale(), z_sign));
+            sv.attribs.scale_x.end * get_back_scale());
 
         sv.attribs.scale_y.restart_with_end(
-            sv.attribs.scale_y.end * std::pow(get_back_scale(), z_sign));
-
-        sv.position += dir;
+            sv.attribs.scale_y.end * get_back_scale());
     }
 
     /* Calculate how much a view should be scaled to fit into the slots */
@@ -436,12 +414,6 @@ class QWFOverviewSwitcher : public wf::per_output_plugin_instance_t, public wf::
 
         // don't scale down if the view is already small enough
         return std::min(needed_exact, 1.0f) * view_thumbnail_scale;
-    }
-
-    /* Position the view, starting from untransformed position */
-    void arrange_view(SwitcherView& sv, int position)
-    {
-        move(sv, position - SWITCHER_POSITION_CENTER);
     }
 
     // returns a list of mapped views
@@ -476,6 +448,12 @@ class QWFOverviewSwitcher : public wf::per_output_plugin_instance_t, public wf::
         background_dim_duration.start();
 
         auto ws_views = get_workspace_views();
+
+        if (ws_views.empty())
+        {
+            return;
+        }
+
         for (auto v : ws_views)
         {
             views.push_back(create_switcher_view(v));
@@ -486,33 +464,10 @@ class QWFOverviewSwitcher : public wf::per_output_plugin_instance_t, public wf::
             return wf::get_focus_timestamp(a.view) > wf::get_focus_timestamp(b.view);
         });
 
-        if (ws_views.empty())
+        for (int i = 0; i < (int)views.size(); i++)
         {
-            return;
+            move(views[i]);
         }
-
-        /* Add a copy of the unfocused view if we have just 2 */
-        if (ws_views.size() == 2)
-        {
-            views.push_back(create_switcher_view(ws_views.back()));
-        }
-
-        arrange_view(views[0], SWITCHER_POSITION_CENTER);
-
-        /* If we have just 1 view, don't do anything else */
-        if (ws_views.size() > 1)
-        {
-            arrange_view(views.back(), SWITCHER_POSITION_LEFT);
-        }
-
-        for (int i = 1; i < (int)views.size() - 1; i++)
-        {
-            arrange_view(views[i], SWITCHER_POSITION_RIGHT);
-        }
-
-        // We want the next view to be focused right off the bat
-        // But we want it to be animated.
-        handle_switch_request(-1);
     }
 
     void dearrange()
@@ -593,7 +548,6 @@ class QWFOverviewSwitcher : public wf::per_output_plugin_instance_t, public wf::
 
         SwitcherView sw{duration};
         sw.view     = view;
-        sw.position = SWITCHER_POSITION_CENTER;
 
         return sw;
     }
@@ -667,51 +621,6 @@ class QWFOverviewSwitcher : public wf::per_output_plugin_instance_t, public wf::
                 ++it;
             }
         }
-    }
-
-    // TODO definitely need to do something here
-    /* sort views according to their Z-order */
-    void rebuild_view_list()
-    {
-        std::stable_sort(views.begin(), views.end(),
-            [] (const SwitcherView& a, const SwitcherView& b)
-        {
-            enum category
-            {
-                FOCUSED   = 0,
-                UNFOCUSED = 1,
-            };
-
-            auto view_category = [] (const SwitcherView& sv)
-            {
-                if (sv.position == SWITCHER_POSITION_CENTER)
-                {
-                    return FOCUSED;
-                }
-
-                return UNFOCUSED;
-            };
-
-            category aCat = view_category(a), bCat = view_category(b);
-            if (aCat == bCat)
-            {
-                return a.position < b.position;
-            } else
-            {
-                return aCat < bCat;
-            }
-        });
-    }
-
-    int count_different_active_views()
-    {
-        std::set<wayfire_toplevel_view> active_views;
-        for (auto& sv : views)
-        {
-            active_views.insert(sv.view);
-        }
-
-        return active_views.size();
     }
 
     void fini() override
