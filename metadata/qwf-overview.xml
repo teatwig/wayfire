@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
 <wayfire>
-	<plugin name="overview-switcher">
-		<_short>Overview Switcher</_short>
-		<_long>A plugin to change active window with an animation.</_long>
+	<plugin name="qwf-overview">
+		<_short>QWF Overview</_short>
+		<_long>A plugin to display an overview of all open windows. Inspired by the GNOME Activities Overview.</_long>
 		<category>Window Management</category>
 		<!-- Key-bindings -->
 		<option name="toggle" type="activator">
