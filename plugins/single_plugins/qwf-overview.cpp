@@ -25,7 +25,7 @@
 #include <wayfire/workspace-set.hpp>
 
 #include <glm/gtc/matrix_transform.hpp>
-
+#include <linux/input-event-codes.h>
 #include <algorithm>
 #include <memory>
 
@@ -83,7 +83,7 @@ struct QWFOverviewView
     }
 };
 
-class QWFOverview : public wf::per_output_plugin_instance_t, public wf::keyboard_interaction_t
+class QWFOverview : public wf::per_output_plugin_instance_t, public wf::pointer_interaction_t
 {
     wf::ipc_activator_t toggle_overview{"qwf-overview/toggle"};
 
@@ -185,8 +185,18 @@ class QWFOverview : public wf::per_output_plugin_instance_t, public wf::keyboard
         toggle_overview.set_handler(toggle_overview_cb);
         output->connect(&view_disappeared);
 
-        input_grab = std::make_unique<wf::input_grab_t>("qwf-overview", output, this, nullptr, nullptr);
+        input_grab = std::make_unique<wf::input_grab_t>("qwf-overview", output, nullptr, this, nullptr);
         grab_interface.cancel = [=] () {deinit_overview();};
+    }
+
+    void handle_pointer_button(const wlr_pointer_button_event& event) override
+    {
+        // TODO allow pointer events for interacting with waybar
+        // probably need to change grab_input for that
+        if (event.button == BTN_LEFT && event.state == WL_POINTER_BUTTON_STATE_RELEASED)
+        {
+            handle_overview_close();
+        }
     }
 
     wf::ipc_activator_t::handler_t toggle_overview_cb = [=] (wf::output_t *output, wayfire_view)
