@@ -79,9 +79,6 @@ struct QWFOverviewView
 class QWFOverview : public wf::per_output_plugin_instance_t, public wf::pointer_interaction_t
 {
     wf::ipc_activator_t toggle_overview{"qwf-overview/toggle"};
-
-    wf::option_wrapper_t<double> view_thumbnail_scale{
-        "qwf-overview/view_thumbnail_scale"};
     wf::option_wrapper_t<wf::animation_description_t> speed{"qwf-overview/speed"};
 
     duration_t duration{speed};
