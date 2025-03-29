@@ -29,10 +29,8 @@
 #include <algorithm>
 #include <memory>
 
-// transformer for the windows
-constexpr const char *overview_transformer = "qwf-overview";
-// transformer for the display backgrounds
-constexpr const char *overview_transformer_background = "qwf-overview";
+constexpr const char *window_transformer_name = "qwf-overview";
+constexpr const char *background_transformer_name = "qwf-overview";
 constexpr float background_dim_factor = 0.6;
 
 using namespace wf::animation;
@@ -41,14 +39,11 @@ class QWFOverviewPaintAttribs
   public:
     QWFOverviewPaintAttribs(const duration_t& duration) :
         scale_x(duration, 1, 1), scale_y(duration, 1, 1),
-        off_x(duration, 0, 0), off_y(duration, 0, 0), off_z(duration, 0, 0),
-        rotation(duration, 0, 0), alpha(duration, 1, 1)
+        off_x(duration, 0, 0), off_y(duration, 0, 0)
     {}
 
-    // TODO remove rotation and alpha
     timed_transition_t scale_x, scale_y;
-    timed_transition_t off_x, off_y, off_z;
-    timed_transition_t rotation, alpha;
+    timed_transition_t off_x, off_y;
 };
 
 struct QWFOverviewView
@@ -75,13 +70,9 @@ struct QWFOverviewView
     {
         call(attribs.off_x);
         call(attribs.off_y);
-        call(attribs.off_z);
 
         call(attribs.scale_x);
         call(attribs.scale_y);
-
-        call(attribs.alpha);
-        call(attribs.rotation);
     }
 };
 
@@ -204,9 +195,8 @@ class QWFOverview : public wf::per_output_plugin_instance_t, public wf::pointer_
             // views are already sorted with the most recent one first
             for (auto& sv : views)
             {
-                // TODO change all transformers to view_2d_transformer_t
                 auto transform = sv.view->get_transformed_node()
-                    ->get_transformer<wf::scene::view_3d_transformer_t>(overview_transformer);
+                    ->get_transformer<wf::scene::view_2d_transformer_t>(window_transformer_name);
                 assert(transform);
                 auto g = transform->get_bounding_box();
 
@@ -215,6 +205,8 @@ class QWFOverview : public wf::per_output_plugin_instance_t, public wf::pointer_
                     continue;
                 }
                 else {
+                    // TODO it only focuses it once the close transition has stopped running
+                    // probably because the whole view is "locked" and regular inputs don't work?
                     wf::view_bring_to_front(sv.view);
                     wf::get_core().default_wm->focus_raise_view(sv.view);
                     // currently only close when clicking directly on a view
@@ -227,7 +219,6 @@ class QWFOverview : public wf::per_output_plugin_instance_t, public wf::pointer_
 
     wf::ipc_activator_t::handler_t toggle_overview_cb = [=] (wf::output_t *output, wayfire_view)
     {
-        // TODO active is toggled within the methods, probably change this later
         // TODO add a flag that the animation is in progress so we don't trigger things too quickly
         // TODO display overlay elements such as waybar?
         if (active)
@@ -367,9 +358,8 @@ class QWFOverview : public wf::per_output_plugin_instance_t, public wf::pointer_
                 wf::scene::set_node_enabled(view->get_root_node(), false);
             }
 
-            view->get_transformed_node()->rem_transformer(overview_transformer);
-            view->get_transformed_node()->rem_transformer(
-                overview_transformer_background);
+            view->get_transformed_node()->rem_transformer(window_transformer_name);
+            view->get_transformed_node()->rem_transformer(background_transformer_name);
         }
 
         views.clear();
@@ -379,61 +369,20 @@ class QWFOverview : public wf::per_output_plugin_instance_t, public wf::pointer_
     }
 
     // TODO this needs some algorithm for placement
-    /* Move view animation target to the left */
+    /* Move view animation target */
     void move(QWFOverviewView& sv)
     {
-        // logic for center view
+        // interesting for positioning logic later
         //auto og   = output->get_relative_geometry();
-        //auto bbox = wf::view_bounding_box_up_to(sv.view, overview_transformer);
-
-        //float dx = (og.width / 2.0 - bbox.width / 2.0) - bbox.x;
-        //float dy = bbox.y - (og.height / 2.0 - bbox.height / 2.0);
-
-        //sv.attribs.off_x.set(0, dx);
-        //sv.attribs.off_y.set(0, dy);
-
-        //float scale = calculate_scaling_factor(bbox);
-        //sv.attribs.scale_x.set(1, scale);
-        //sv.attribs.scale_y.set(1, scale);
-
-        //sv.attribs.off_x.restart_with_end(
-        //    sv.attribs.off_x.end + get_center_offset() * dir);
-        //sv.attribs.off_y.restart_same_end();
+        //auto bbox = wf::view_bounding_box_up_to(sv.view, window_transformer_name);
 
         // these are timed_transition_t
         // restart_with_end leaves the current state and only sets the end
 
-        constexpr float z_offset = -1.0;
         constexpr float back_scale = 0.66;
 
-        sv.attribs.off_z.restart_with_end(
-            sv.attribs.off_z.end + z_offset);
-
-        /* scale views that aren't in the center */
-        sv.attribs.scale_x.restart_with_end(
-            sv.attribs.scale_x.end * back_scale);
-
-        sv.attribs.scale_y.restart_with_end(
-            sv.attribs.scale_y.end * back_scale);
-    }
-
-    /* Calculate how much a view should be scaled to fit into the slots */
-    float calculate_scaling_factor(const wf::geometry_t& bbox) const
-    {
-        /* Each view should not be more than this percentage of the
-         * width/height of the output */
-        constexpr float screen_percentage = 0.45;
-
-        auto og = output->get_relative_geometry();
-
-        float max_width  = og.width * screen_percentage;
-        float max_height = og.height * screen_percentage;
-
-        float needed_exact = std::min(max_width / bbox.width,
-            max_height / bbox.height);
-
-        // don't scale down if the view is already small enough
-        return std::min(needed_exact, 1.0f) * view_thumbnail_scale;
+        sv.attribs.scale_x.restart_with_end(sv.attribs.scale_x.end * back_scale);
+        sv.attribs.scale_y.restart_with_end(sv.attribs.scale_y.end * back_scale);
     }
 
     // returns a list of mapped views
@@ -482,7 +431,6 @@ class QWFOverview : public wf::per_output_plugin_instance_t, public wf::pointer_
         {
             sv.attribs.off_x.restart_with_end(0);
             sv.attribs.off_y.restart_with_end(0);
-            sv.attribs.off_z.restart_with_end(0);
 
             sv.attribs.scale_x.restart_with_end(1.0);
             sv.attribs.scale_y.restart_with_end(1.0);
@@ -512,12 +460,12 @@ class QWFOverview : public wf::per_output_plugin_instance_t, public wf::pointer_
             if (dim == 1.0)
             {
                 view->get_transformed_node()->rem_transformer(
-                    overview_transformer_background);
+                    background_transformer_name);
             } else
             {
                 auto tr =
                     wf::ensure_named_transformer<wf::scene::view_3d_transformer_t>(
-                        view, wf::TRANSFORMER_3D, overview_transformer_background,
+                        view, wf::TRANSFORMER_3D, background_transformer_name,
                         view);
                 tr->color[0] = tr->color[1] = tr->color[2] = dim;
             }
@@ -531,7 +479,7 @@ class QWFOverview : public wf::per_output_plugin_instance_t, public wf::pointer_
          * Note that a view might be visible on more than 1 place, so damage
          * tracking doesn't work reliably. To circumvent this, we simply damage
          * the whole output */
-        if (!view->get_transformed_node()->get_transformer(overview_transformer))
+        if (!view->get_transformed_node()->get_transformer(window_transformer_name))
         {
             if (view->minimized)
             {
@@ -541,12 +489,12 @@ class QWFOverview : public wf::per_output_plugin_instance_t, public wf::pointer_
             }
 
             view->get_transformed_node()->add_transformer(
-                std::make_shared<wf::scene::view_3d_transformer_t>(view),
-                wf::TRANSFORMER_3D, overview_transformer);
+                std::make_shared<wf::scene::view_2d_transformer_t>(view),
+                wf::TRANSFORMER_2D, window_transformer_name);
         }
 
         QWFOverviewView sw{duration};
-        sw.view     = view;
+        sw.view = view;
 
         return sw;
     }
@@ -567,18 +515,15 @@ class QWFOverview : public wf::per_output_plugin_instance_t, public wf::pointer_
     void render_view(const QWFOverviewView& sv, const wf::render_target_t& buffer)
     {
         auto transform = sv.view->get_transformed_node()
-            ->get_transformer<wf::scene::view_3d_transformer_t>(overview_transformer);
+            ->get_transformer<wf::scene::view_2d_transformer_t>(window_transformer_name);
         assert(transform);
 
-        transform->translation = glm::translate(glm::mat4(1.0),
-        {(double)sv.attribs.off_x, (double)sv.attribs.off_y,
-            (double)sv.attribs.off_z});
+        transform->translation_x = sv.attribs.off_x;
+        transform->translation_y = sv.attribs.off_y;
 
-        transform->scaling = glm::scale(glm::mat4(1.0),
-            {(double)sv.attribs.scale_x, (double)sv.attribs.scale_y, 1.0});
+        transform->scale_x = sv.attribs.scale_x;
+        transform->scale_y = sv.attribs.scale_y;
 
-
-        transform->color[3] = sv.attribs.alpha;
         render_view_scene(sv.view, buffer);
     }
 
