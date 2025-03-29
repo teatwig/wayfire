@@ -29,7 +29,9 @@
 #include <algorithm>
 #include <memory>
 
+// transformer for the windows
 constexpr const char *overview_transformer = "qwf-overview";
+// transformer for the display backgrounds
 constexpr const char *overview_transformer_background = "qwf-overview";
 constexpr float background_dim_factor = 0.6;
 
@@ -180,6 +182,7 @@ class QWFOverview : public wf::per_output_plugin_instance_t, public wf::pointer_
   public:
     void init() override
     {
+        // TODO remove all of these or change to LOGD before release
         LOGI("qwf: init overview");
 
         toggle_overview.set_handler(toggle_overview_cb);
@@ -193,26 +196,45 @@ class QWFOverview : public wf::per_output_plugin_instance_t, public wf::pointer_
     {
         // TODO allow pointer events for interacting with waybar
         // probably need to change grab_input for that
+        // TODO slightly enlarge hovered view to show it's gonna be active
         if (event.button == BTN_LEFT && event.state == WL_POINTER_BUTTON_STATE_RELEASED)
         {
-            handle_overview_close();
+            auto cursor = wf::get_core().get_cursor_position();
+
+            // views are already sorted with the most recent one first
+            for (auto& sv : views)
+            {
+                // TODO change all transformers to view_2d_transformer_t
+                auto transform = sv.view->get_transformed_node()
+                    ->get_transformer<wf::scene::view_3d_transformer_t>(overview_transformer);
+                assert(transform);
+                auto g = transform->get_bounding_box();
+
+                if (cursor.x < g.x || cursor.x > g.x + g.width || cursor.y < g.y || cursor.y > g.y + g.height)
+                {
+                    continue;
+                }
+                else {
+                    wf::view_bring_to_front(sv.view);
+                    wf::get_core().default_wm->focus_raise_view(sv.view);
+                    // currently only close when clicking directly on a view
+                    handle_overview_close();
+                    break;
+                }
+            }
         }
     }
 
     wf::ipc_activator_t::handler_t toggle_overview_cb = [=] (wf::output_t *output, wayfire_view)
     {
-        LOGI("qwf: toggle pressed");
-
         // TODO active is toggled within the methods, probably change this later
         // TODO add a flag that the animation is in progress so we don't trigger things too quickly
         // TODO display overlay elements such as waybar?
         if (active)
         {
-            LOGI("qwf: deactivate");
             return handle_overview_close();
         } else
         {
-            LOGI("qwf: activate");
             return handle_overview_open();
         }
     };
@@ -290,9 +312,10 @@ class QWFOverview : public wf::per_output_plugin_instance_t, public wf::pointer_
          * overview activation? */
         if (!active)
         {
+            LOGI("qwf: opening overview");
+
             active = true;
             input_grab->grab_input(wf::scene::layer::OVERLAY);
-
             arrange();
         }
 
@@ -302,8 +325,11 @@ class QWFOverview : public wf::per_output_plugin_instance_t, public wf::pointer_
     /* When overview is done and starts animating towards end */
     bool handle_overview_close()
     {
+        LOGI("qwf: closing overview");
+
         dearrange();
         input_grab->ungrab_input();
+        active = false;
 
         return true;
     }
@@ -352,24 +378,6 @@ class QWFOverview : public wf::per_output_plugin_instance_t, public wf::pointer_
             wf::scene::update_flag::INPUT_STATE);
     }
 
-    /* offset from the left or from the right */
-    float get_center_offset()
-    {
-        return output->get_relative_geometry().width / 3.0;
-    }
-
-    /* get the scale for non-focused views */
-    float get_back_scale()
-    {
-        return 0.66;
-    }
-
-    /* offset in Z-direction for non-focused views */
-    float get_z_offset()
-    {
-        return -1.0;
-    }
-
     // TODO this needs some algorithm for placement
     /* Move view animation target to the left */
     void move(QWFOverviewView& sv)
@@ -395,15 +403,18 @@ class QWFOverview : public wf::per_output_plugin_instance_t, public wf::pointer_
         // these are timed_transition_t
         // restart_with_end leaves the current state and only sets the end
 
+        constexpr float z_offset = -1.0;
+        constexpr float back_scale = 0.66;
+
         sv.attribs.off_z.restart_with_end(
-            sv.attribs.off_z.end + get_z_offset());
+            sv.attribs.off_z.end + z_offset);
 
         /* scale views that aren't in the center */
         sv.attribs.scale_x.restart_with_end(
-            sv.attribs.scale_x.end * get_back_scale());
+            sv.attribs.scale_x.end * back_scale);
 
         sv.attribs.scale_y.restart_with_end(
-            sv.attribs.scale_y.end * get_back_scale());
+            sv.attribs.scale_y.end * back_scale);
     }
 
     /* Calculate how much a view should be scaled to fit into the slots */
@@ -431,22 +442,8 @@ class QWFOverview : public wf::per_output_plugin_instance_t, public wf::pointer_
         return output->wset()->get_views(wf::WSET_MAPPED_ONLY | wf::WSET_CURRENT_WORKSPACE);
     }
 
-    // TODO change this to focus the view that you're clicking on
-    /* Change the current focus to the next or the previous view */
-    void focus_next(int dir)
-    {
-        auto ws_views = get_workspace_views();
-        /* Change the focused view and rearrange views so that focused is on top */
-        int size = ws_views.size();
-
-        // calculate focus index & focus it
-        int focused_view_index = (size + dir) % size;
-        auto focused_view = ws_views[focused_view_index];
-        wf::view_bring_to_front(focused_view);
-    }
-
     /* Create the initial arrangement on the screen
-     * Also changes the focus to the next or the last view, depending on dir */
+     * Also sorts the views so the last focused one is at the front */
     void arrange()
     {
         // clear views in case that deinit() hasn't been run
@@ -494,13 +491,6 @@ class QWFOverview : public wf::per_output_plugin_instance_t, public wf::pointer_
         background_dim.restart_with_end(1);
         background_dim_duration.start();
         duration.start();
-        active = false;
-
-        /* Potentially restore view[0] if it was maximized */
-        if (views.size())
-        {
-            wf::get_core().default_wm->focus_raise_view(views[0].view);
-        }
     }
 
     std::vector<wayfire_view> get_background_views() const
