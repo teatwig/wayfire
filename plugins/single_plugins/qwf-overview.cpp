@@ -5,7 +5,6 @@
 
 #include <wayfire/core.hpp>
 #include <wayfire/debug.hpp>
-#include <wayfire/nonstd/reverse.hpp>
 #include <wayfire/object.hpp>
 #include <wayfire/opengl.hpp>
 #include <wayfire/output.hpp>
@@ -535,8 +534,7 @@ class QWFOverview : public wf::per_output_plugin_instance_t, public wf::pointer_
             render_view_scene(view, fb);
         }
 
-        /* Render in the reverse order because we don't use depth testing */
-        for (auto& view : wf::reverse(views))
+        for (auto view : views)
         {
             render_view(view, fb);
         }
