@@ -3,71 +3,85 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     utils.url = "github:numtide/flake-utils";
   };
-  outputs = { self, nixpkgs, utils }: utils.lib.eachDefaultSystem (system:
-    let
-      pkgs = nixpkgs.legacyPackages.${system};
-    in
-    {
-      devShell = pkgs.mkShell {
-        buildInputs = with pkgs; [
-        ];
-      };
+  outputs = {
+    self,
+    nixpkgs,
+    utils,
+  }:
+    utils.lib.eachDefaultSystem (
+      system: let
+        pkgs = nixpkgs.legacyPackages.${system};
+        clangStdenv = pkgs.clangStdenv;
+      in {
+        devShell = (pkgs.mkShell.override { stdenv = clangStdenv; }) {
+          inputsFrom = [
+            (self.packages.${system}.default.overrideAttrs (old: {
+              # otherwise clang-tidy won't find the stdenv headers for cpp
+              nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.clang-tools ];
+            }))
+          ];
+          buildInputs = with pkgs; [
+          ];
+        };
 
-      packages.default = pkgs.stdenv.mkDerivation {
-        name = "wayfire-test";
+        packages.default = clangStdenv.mkDerivation {
+          name = "wayfire-test";
 
-        src = ./.;
+          src = ./.;
 
-        nativeBuildInputs = with pkgs; [
-          meson
-          ninja
-          pkg-config
-          wayland-scanner
-        ];
+          nativeBuildInputs = with pkgs; [
+            meson
+            ninja
+            pkg-config
+            wayland-scanner
+          ];
 
-        buildInputs = with pkgs; [
-          libGL
-          libdrm
-          libexecinfo
-          libevdev
-          libinput
-          libjpeg
-          libxkbcommon
-          wayland-protocols
-          xorg.xcbutilwm
-          nlohmann_json
-          yyjson
-          libxml2
+          buildInputs = with pkgs; [
+            libGL
+            libdrm
+            libexecinfo
+            libevdev
+            libinput
+            libjpeg
+            libxkbcommon
+            wayland-protocols
+            xorg.xcbutilwm
+            nlohmann_json
+            yyjson
+            libxml2
 
-          # wf-config
-          glm
-        ];
+            # wf-config
+            glm
 
-        propagatedBuildInputs = with pkgs; [
-          # wf-config
-          wlroots_0_18
-          wayland
-          cairo
-          pango
-        ];
+            # clang
+            llvmPackages.openmp
+          ];
 
-        nativeCheckInputs = with pkgs; [
-          cmake
-          doctest
-        ];
+          propagatedBuildInputs = with pkgs; [
+            # wf-config
+            wlroots_0_18
+            wayland
+            cairo
+            pango
+          ];
 
-        # CMake is just used for finding doctest.
-        dontUseCmakeConfigure = true;
+          nativeCheckInputs = with pkgs; [
+            cmake
+            doctest
+          ];
 
-        doCheck = true;
+          # CMake is just used for finding doctest.
+          dontUseCmakeConfigure = true;
 
-        mesonFlags = with pkgs; [
-          "--sysconfdir /etc"
-          "-Duse_system_wlroots=enabled"
-          "-Duse_system_wfconfig=disabled"
-          (lib.mesonEnable "wf-touch:tests" (stdenv.buildPlatform.canExecute stdenv.hostPlatform))
-        ];
-      };
-    }
-  );
+          doCheck = true;
+
+          mesonFlags = with pkgs; [
+            "--sysconfdir /etc"
+            "-Duse_system_wlroots=enabled"
+            "-Duse_system_wfconfig=disabled"
+            (lib.mesonEnable "wf-touch:tests" (stdenv.buildPlatform.canExecute stdenv.hostPlatform))
+          ];
+        };
+      }
+    );
 }
