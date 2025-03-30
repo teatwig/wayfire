@@ -1,0 +1,4 @@
+---
+Language: Cpp
+ColumnLimit: 0
+AlignAfterOpenBracket: AlwaysBreak

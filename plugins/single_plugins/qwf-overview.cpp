@@ -23,9 +23,9 @@
 #include <wayfire/window-manager.hpp>
 #include <wayfire/workspace-set.hpp>
 
+#include <algorithm>
 #include <glm/gtc/matrix_transform.hpp>
 #include <linux/input-event-codes.h>
-#include <algorithm>
 #include <memory>
 
 constexpr const char *window_transformer_name = "qwf-overview";
@@ -33,543 +33,454 @@ constexpr const char *background_transformer_name = "qwf-overview";
 constexpr float background_dim_factor = 0.6;
 
 using namespace wf::animation;
-class QWFOverviewPaintAttribs
-{
-  public:
-    QWFOverviewPaintAttribs(const duration_t& duration) :
-        scale_x(duration, 1, 1), scale_y(duration, 1, 1),
-        off_x(duration, 0, 0), off_y(duration, 0, 0)
-    {}
+class QWFOverviewPaintAttribs {
+public:
+  QWFOverviewPaintAttribs(const duration_t &duration) : scale_x(duration, 1, 1), scale_y(duration, 1, 1),
+                                                        off_x(duration, 0, 0), off_y(duration, 0, 0) {}
 
-    timed_transition_t scale_x, scale_y;
-    timed_transition_t off_x, off_y;
+  timed_transition_t scale_x, scale_y;
+  timed_transition_t off_x, off_y;
 };
 
-struct QWFOverviewView
-{
-    wayfire_toplevel_view view;
-    QWFOverviewPaintAttribs attribs;
+struct QWFOverviewView {
+  wayfire_toplevel_view view;
+  QWFOverviewPaintAttribs attribs;
 
-    QWFOverviewView(duration_t& duration) : attribs(duration)
-    {}
+  QWFOverviewView(duration_t &duration) : attribs(duration) {}
 
-    /* Make animation start values the current progress of duration */
-    void refresh_start()
-    {
-        for_each([] (timed_transition_t& t) { t.restart_same_end(); });
+  /* Make animation start values the current progress of duration */
+  void refresh_start() {
+    for_each([](timed_transition_t &t) { t.restart_same_end(); });
+  }
+
+  void to_end() {
+    for_each([](timed_transition_t &t) { t.set(t.end, t.end); });
+  }
+
+private:
+  void for_each(std::function<void(timed_transition_t &t)> call) {
+    call(attribs.off_x);
+    call(attribs.off_y);
+
+    call(attribs.scale_x);
+    call(attribs.scale_y);
+  }
+};
+
+class QWFOverview : public wf::per_output_plugin_instance_t, public wf::pointer_interaction_t {
+  wf::ipc_activator_t toggle_overview{"qwf-overview/toggle"};
+  wf::option_wrapper_t<wf::animation_description_t> speed{"qwf-overview/speed"};
+
+  duration_t duration{speed};
+  duration_t background_dim_duration{speed};
+  timed_transition_t background_dim{background_dim_duration};
+
+  std::unique_ptr<wf::input_grab_t> input_grab;
+
+  /* If a view comes before another in this list, it is on top of it */
+  std::vector<QWFOverviewView> views;
+
+  bool active = false;
+
+  class overview_render_node_t : public wf::scene::node_t {
+    class overview_render_instance_t : public wf::scene::render_instance_t {
+      std::shared_ptr<overview_render_node_t> self;
+      wf::scene::damage_callback push_damage;
+      wf::signal::connection_t<wf::scene::node_damage_signal> on_overview_damage =
+          [=](wf::scene::node_damage_signal *ev) {
+            push_damage(ev->region);
+          };
+
+    public:
+      overview_render_instance_t(overview_render_node_t *self, wf::scene::damage_callback push_damage) {
+        this->self = std::dynamic_pointer_cast<overview_render_node_t>(self->shared_from_this());
+        this->push_damage = push_damage;
+        self->connect(&on_overview_damage);
+      }
+
+      void schedule_instructions(
+          std::vector<wf::scene::render_instruction_t> &instructions,
+          const wf::render_target_t &target, wf::region_t &damage) override {
+        instructions.push_back(wf::scene::render_instruction_t{
+            .instance = this,
+            .target = target,
+            .damage = damage & self->get_bounding_box(),
+        });
+
+        // Don't render anything below
+        auto bbox = self->get_bounding_box();
+        damage ^= bbox;
+      }
+
+      void render(const wf::render_target_t &target, const wf::region_t &region, const std::any &tag) override {
+        self->overview->render(target.translated(-wf::origin(self->get_bounding_box())));
+      }
+    };
+
+  public:
+    overview_render_node_t(QWFOverview *overview) : node_t(false) {
+      this->overview = overview;
     }
 
-    void to_end()
-    {
-        for_each([] (timed_transition_t& t) { t.set(t.end, t.end); });
+    virtual void gen_render_instances(
+        std::vector<wf::scene::render_instance_uptr> &instances,
+        wf::scene::damage_callback push_damage, wf::output_t *shown_on) {
+      if (shown_on != this->overview->output) {
+        return;
+      }
+
+      instances.push_back(std::make_unique<overview_render_instance_t>(this, push_damage));
+    }
+
+    wf::geometry_t get_bounding_box() {
+      return overview->output->get_layout_geometry();
     }
 
   private:
-    void for_each(std::function<void(timed_transition_t& t)> call)
-    {
-        call(attribs.off_x);
-        call(attribs.off_y);
-
-        call(attribs.scale_x);
-        call(attribs.scale_y);
-    }
-};
-
-class QWFOverview : public wf::per_output_plugin_instance_t, public wf::pointer_interaction_t
-{
-    wf::ipc_activator_t toggle_overview{"qwf-overview/toggle"};
-    wf::option_wrapper_t<wf::animation_description_t> speed{"qwf-overview/speed"};
-
-    duration_t duration{speed};
-    duration_t background_dim_duration{speed};
-    timed_transition_t background_dim{background_dim_duration};
-
-    std::unique_ptr<wf::input_grab_t> input_grab;
-
-    /* If a view comes before another in this list, it is on top of it */
-    std::vector<QWFOverviewView> views;
-
-    bool active = false;
-
-    class overview_render_node_t : public wf::scene::node_t
-    {
-        class overview_render_instance_t : public wf::scene::render_instance_t
-        {
-            std::shared_ptr<overview_render_node_t> self;
-            wf::scene::damage_callback push_damage;
-            wf::signal::connection_t<wf::scene::node_damage_signal> on_overview_damage =
-                [=] (wf::scene::node_damage_signal *ev)
-            {
-                push_damage(ev->region);
-            };
-
-          public:
-            overview_render_instance_t(overview_render_node_t *self, wf::scene::damage_callback push_damage)
-            {
-                this->self = std::dynamic_pointer_cast<overview_render_node_t>(self->shared_from_this());
-                this->push_damage = push_damage;
-                self->connect(&on_overview_damage);
-            }
-
-            void schedule_instructions(
-                std::vector<wf::scene::render_instruction_t>& instructions,
-                const wf::render_target_t& target, wf::region_t& damage) override
-            {
-                instructions.push_back(wf::scene::render_instruction_t{
-                    .instance = this,
-                    .target   = target,
-                    .damage   = damage & self->get_bounding_box(),
-                });
-
-                // Don't render anything below
-                auto bbox = self->get_bounding_box();
-                damage ^= bbox;
-            }
-
-            void render(const wf::render_target_t& target,
-                const wf::region_t& region, const std::any& tag) override
-            {
-                self->overview->render(target.translated(-wf::origin(self->get_bounding_box())));
-            }
-        };
-
-      public:
-        overview_render_node_t(QWFOverview *overview) : node_t(false)
-        {
-            this->overview = overview;
-        }
-
-        virtual void gen_render_instances(
-            std::vector<wf::scene::render_instance_uptr>& instances,
-            wf::scene::damage_callback push_damage, wf::output_t *shown_on)
-        {
-            if (shown_on != this->overview->output)
-            {
-                return;
-            }
-
-            instances.push_back(std::make_unique<overview_render_instance_t>(this, push_damage));
-        }
-
-        wf::geometry_t get_bounding_box()
-        {
-            return overview->output->get_layout_geometry();
-        }
-
-      private:
-        QWFOverview *overview;
-    };
-
-    std::shared_ptr<overview_render_node_t> render_node;
-    wf::plugin_activation_data_t grab_interface = {
-        .name = "qwf-overview",
-        .capabilities = wf::CAPABILITY_MANAGE_COMPOSITOR,
-    };
-
-  public:
-    void init() override
-    {
-        // TODO remove all of these or change to LOGD before release
-        LOGI("qwf: init overview");
-
-        toggle_overview.set_handler(toggle_overview_cb);
-        output->connect(&view_disappeared);
-
-        input_grab = std::make_unique<wf::input_grab_t>("qwf-overview", output, nullptr, this, nullptr);
-        grab_interface.cancel = [=] () {deinit_overview();};
-    }
-
-    void handle_pointer_button(const wlr_pointer_button_event& event) override
-    {
-        // TODO allow pointer events for interacting with waybar
-        // probably need to change grab_input for that
-        // TODO slightly enlarge hovered view to show it's gonna be active
-        if (event.button == BTN_LEFT && event.state == WL_POINTER_BUTTON_STATE_RELEASED)
-        {
-            auto cursor = wf::get_core().get_cursor_position();
-
-            // views are already sorted with the most recent one first
-            for (auto& sv : views)
-            {
-                auto transform = sv.view->get_transformed_node()
-                    ->get_transformer<wf::scene::view_2d_transformer_t>(window_transformer_name);
-                assert(transform);
-                auto g = transform->get_bounding_box();
-
-                if (cursor.x < g.x || cursor.x > g.x + g.width || cursor.y < g.y || cursor.y > g.y + g.height)
-                {
-                    continue;
-                }
-                else {
-                    // TODO it only focuses it once the close transition has stopped running
-                    // probably because the whole view is "locked" and regular inputs don't work?
-                    wf::view_bring_to_front(sv.view);
-                    wf::get_core().default_wm->focus_raise_view(sv.view);
-                    // currently only close when clicking directly on a view
-                    handle_overview_close();
-                    break;
-                }
-            }
-        }
-    }
-
-    wf::ipc_activator_t::handler_t toggle_overview_cb = [=] (wf::output_t *output, wayfire_view)
-    {
-        // TODO add a flag that the animation is in progress so we don't trigger things too quickly
-        // TODO display overlay elements such as waybar?
-        if (active)
-        {
-            return handle_overview_close();
-        } else
-        {
-            return handle_overview_open();
-        }
-    };
-
-    wf::effect_hook_t pre_hook = [=] ()
-    {
-        dim_background(background_dim);
-        wf::scene::damage_node(render_node, render_node->get_bounding_box());
-
-        if (!duration.running())
-        {
-            if (!active)
-            {
-                deinit_overview();
-            }
-        }
-    };
-
-    wf::signal::connection_t<wf::view_disappeared_signal> view_disappeared =
-        [=] (wf::view_disappeared_signal *ev)
-    {
-        if (auto toplevel = toplevel_cast(ev->view))
-        {
-            handle_view_removed(toplevel);
-        }
-    };
-
-    void handle_view_removed(wayfire_toplevel_view view)
-    {
-        // not running at all, don't care
-        if (!output->is_plugin_active(grab_interface.name))
-        {
-            return;
-        }
-
-        bool need_action = false;
-        for (auto& sv : views)
-        {
-            need_action |= (sv.view == view);
-        }
-
-        // don't do anything if we're not using this view
-        if (!need_action)
-        {
-            return;
-        }
-
-        if (active)
-        {
-            arrange();
-        } else
-        {
-            cleanup_views([=] (QWFOverviewView& sv)
-            { return sv.view == view; });
-        }
-    }
-
-    bool handle_overview_open()
-    {
-        if (get_workspace_views().empty())
-        {
-            return false;
-        }
-
-        /* If we haven't grabbed, then we haven't setup anything */
-        if (!output->is_plugin_active(grab_interface.name))
-        {
-            if (!init_overview())
-            {
-                return false;
-            }
-        }
-
-        /* Maybe we're still animating the exit animation from a previous
-         * overview activation? */
-        if (!active)
-        {
-            LOGI("qwf: opening overview");
-
-            active = true;
-            input_grab->grab_input(wf::scene::layer::OVERLAY);
-            arrange();
-        }
-
-        return true;
-    }
-
-    /* When overview is done and starts animating towards end */
-    bool handle_overview_close()
-    {
-        LOGI("qwf: closing overview");
-
-        dearrange();
-        input_grab->ungrab_input();
-        active = false;
-
-        return true;
-    }
-
-    /* Sets up basic hooks needed while overview works and/or displays animations.
-     * Also lower any fullscreen views that are active */
-    bool init_overview()
-    {
-        if (!output->activate_plugin(&grab_interface))
-        {
-            return false;
-        }
-
-        output->render->add_effect(&pre_hook, wf::OUTPUT_EFFECT_PRE);
-
-        render_node = std::make_shared<overview_render_node_t>(this);
-        wf::scene::add_front(wf::get_core().scene(), render_node);
-        return true;
-    }
-
-    /* The reverse of init_overview */
-    void deinit_overview()
-    {
-        output->deactivate_plugin(&grab_interface);
-
-        output->render->rem_effect(&pre_hook);
-        wf::scene::remove_child(render_node);
-        render_node = nullptr;
-
-        for (auto& view : output->wset()->get_views())
-        {
-            if (view->has_data("qwf-overview-minimized-showed"))
-            {
-                view->erase_data("qwf-overview-minimized-showed");
-                wf::scene::set_node_enabled(view->get_root_node(), false);
-            }
-
-            view->get_transformed_node()->rem_transformer(window_transformer_name);
-            view->get_transformed_node()->rem_transformer(background_transformer_name);
-        }
-
-        views.clear();
-
-        wf::scene::update(wf::get_core().scene(),
-            wf::scene::update_flag::INPUT_STATE);
-    }
-
-    // TODO this needs some algorithm for placement
-    /* Move view animation target */
-    void move(QWFOverviewView& sv)
-    {
-        // interesting for positioning logic later
-        //auto og   = output->get_relative_geometry();
-        //auto bbox = wf::view_bounding_box_up_to(sv.view, window_transformer_name);
-
-        // these are timed_transition_t
-        // restart_with_end leaves the current state and only sets the end
-
-        constexpr float back_scale = 0.66;
-
-        sv.attribs.scale_x.restart_with_end(sv.attribs.scale_x.end * back_scale);
-        sv.attribs.scale_y.restart_with_end(sv.attribs.scale_y.end * back_scale);
-    }
-
-    // returns a list of mapped views
-    std::vector<wayfire_toplevel_view> get_workspace_views() const
-    {
-        return output->wset()->get_views(wf::WSET_MAPPED_ONLY | wf::WSET_CURRENT_WORKSPACE);
-    }
-
-    /* Create the initial arrangement on the screen
-     * Also sorts the views so the last focused one is at the front */
-    void arrange()
-    {
-        // clear views in case that deinit() hasn't been run
-        views.clear();
-
-        duration.start();
-        background_dim.set(1, background_dim_factor);
-        background_dim_duration.start();
-
-        auto ws_views = get_workspace_views();
-
-        if (ws_views.empty())
-        {
-            return;
-        }
-
-        for (auto v : ws_views)
-        {
-            views.push_back(create_overview_view(v));
-        }
-
-        std::sort(views.begin(), views.end(), [] (QWFOverviewView& a, QWFOverviewView& b)
-        {
-            return wf::get_focus_timestamp(a.view) > wf::get_focus_timestamp(b.view);
-        });
-
-        for (int i = 0; i < (int)views.size(); i++)
-        {
-            move(views[i]);
-        }
-    }
-
-    void dearrange()
-    {
-        for (auto& sv : views)
-        {
-            sv.attribs.off_x.restart_with_end(0);
-            sv.attribs.off_y.restart_with_end(0);
-
-            sv.attribs.scale_x.restart_with_end(1.0);
-            sv.attribs.scale_y.restart_with_end(1.0);
-        }
-
-        background_dim.restart_with_end(1);
-        background_dim_duration.start();
-        duration.start();
-    }
-
-    std::vector<wayfire_view> get_background_views() const
-    {
-        return wf::collect_views_from_output(output,
-            {wf::scene::layer::BACKGROUND, wf::scene::layer::BOTTOM});
-    }
-
-    std::vector<wayfire_view> get_overlay_views() const
-    {
-        return wf::collect_views_from_output(output,
-            {wf::scene::layer::TOP, wf::scene::layer::OVERLAY, wf::scene::layer::DWIDGET});
-    }
-
-    void dim_background(float dim)
-    {
-        for (auto view : get_background_views())
-        {
-            if (dim == 1.0)
-            {
-                view->get_transformed_node()->rem_transformer(
-                    background_transformer_name);
-            } else
-            {
-                auto tr =
-                    wf::ensure_named_transformer<wf::scene::view_3d_transformer_t>(
-                        view, wf::TRANSFORMER_3D, background_transformer_name,
-                        view);
-                tr->color[0] = tr->color[1] = tr->color[2] = dim;
-            }
-        }
-    }
-
-    QWFOverviewView create_overview_view(wayfire_toplevel_view view)
-    {
-        /* we add a view transform if there isn't any.
-         *
-         * Note that a view might be visible on more than 1 place, so damage
-         * tracking doesn't work reliably. To circumvent this, we simply damage
-         * the whole output */
-        if (!view->get_transformed_node()->get_transformer(window_transformer_name))
-        {
-            if (view->minimized)
-            {
-                wf::scene::set_node_enabled(view->get_root_node(), true);
-                view->store_data(std::make_unique<wf::custom_data_t>(),
-                    "qwf-overview-minimized-showed");
-            }
-
-            view->get_transformed_node()->add_transformer(
-                std::make_shared<wf::scene::view_2d_transformer_t>(view),
-                wf::TRANSFORMER_2D, window_transformer_name);
-        }
-
-        QWFOverviewView sw{duration};
-        sw.view = view;
-
-        return sw;
-    }
-
-    void render_view_scene(wayfire_view view, const wf::render_target_t& buffer)
-    {
-        std::vector<wf::scene::render_instance_uptr> instances;
-        view->get_transformed_node()->gen_render_instances(instances, [] (auto) {});
-
-        wf::scene::render_pass_params_t params;
-        params.instances = &instances;
-        params.damage    = view->get_transformed_node()->get_bounding_box();
-        params.reference_output = this->output;
-        params.target = buffer;
-        wf::scene::run_render_pass(params, 0);
-    }
-
-    void render_view(const QWFOverviewView& sv, const wf::render_target_t& buffer)
-    {
+    QWFOverview *overview;
+  };
+
+  std::shared_ptr<overview_render_node_t> render_node;
+  wf::plugin_activation_data_t grab_interface = {
+      .name = "qwf-overview",
+      .capabilities = wf::CAPABILITY_MANAGE_COMPOSITOR,
+  };
+
+public:
+  void init() override {
+    // TODO remove all of these or change to LOGD before release
+    LOGI("qwf: init overview");
+
+    toggle_overview.set_handler(toggle_overview_cb);
+    output->connect(&view_disappeared);
+
+    input_grab = std::make_unique<wf::input_grab_t>("qwf-overview", output, nullptr, this, nullptr);
+    grab_interface.cancel = [=]() { deinit_overview(); };
+  }
+
+  void handle_pointer_button(const wlr_pointer_button_event &event) override {
+    // TODO allow pointer events for interacting with waybar
+    // probably need to change grab_input for that
+    // TODO slightly enlarge hovered view to show it's gonna be active
+    if (event.button == BTN_LEFT && event.state == WL_POINTER_BUTTON_STATE_RELEASED) {
+      auto cursor = wf::get_core().get_cursor_position();
+
+      // views are already sorted with the most recent one first
+      for (auto &sv : views) {
         auto transform = sv.view->get_transformed_node()
-            ->get_transformer<wf::scene::view_2d_transformer_t>(window_transformer_name);
+                             ->get_transformer<wf::scene::view_2d_transformer_t>(window_transformer_name);
         assert(transform);
+        auto g = transform->get_bounding_box();
 
-        transform->translation_x = sv.attribs.off_x;
-        transform->translation_y = sv.attribs.off_y;
+        if (cursor.x < g.x || cursor.x > g.x + g.width || cursor.y < g.y || cursor.y > g.y + g.height) {
+          continue;
+        } else {
+          // TODO it only focuses it once the close transition has stopped running
+          // probably because the whole view is "locked" and regular inputs don't work?
+          wf::view_bring_to_front(sv.view);
+          wf::get_core().default_wm->focus_raise_view(sv.view);
+          // currently only close when clicking directly on a view
+          handle_overview_close();
+          break;
+        }
+      }
+    }
+  }
 
-        transform->scale_x = sv.attribs.scale_x;
-        transform->scale_y = sv.attribs.scale_y;
+  wf::ipc_activator_t::handler_t toggle_overview_cb = [=](wf::output_t *output, wayfire_view) {
+    // TODO add a flag that the animation is in progress so we don't trigger things too quickly
+    // TODO display overlay elements such as waybar?
+    if (active) {
+      return handle_overview_close();
+    } else {
+      return handle_overview_open();
+    }
+  };
 
-        render_view_scene(sv.view, buffer);
+  wf::effect_hook_t pre_hook = [=]() {
+    dim_background(background_dim);
+    wf::scene::damage_node(render_node, render_node->get_bounding_box());
+
+    if (!duration.running()) {
+      if (!active) {
+        deinit_overview();
+      }
+    }
+  };
+
+  wf::signal::connection_t<wf::view_disappeared_signal> view_disappeared =
+      [=](wf::view_disappeared_signal *ev) {
+        if (auto toplevel = toplevel_cast(ev->view)) {
+          handle_view_removed(toplevel);
+        }
+      };
+
+  void handle_view_removed(wayfire_toplevel_view view) {
+    // not running at all, don't care
+    if (!output->is_plugin_active(grab_interface.name)) {
+      return;
     }
 
-    void render(const wf::render_target_t& fb)
-    {
-        OpenGL::render_begin(fb);
-        OpenGL::clear({0, 0, 0, 1});
-        OpenGL::render_end();
-
-        for (auto view : get_background_views())
-        {
-            render_view_scene(view, fb);
-        }
-
-        for (auto view : views)
-        {
-            render_view(view, fb);
-        }
-
-        for (auto view : get_overlay_views())
-        {
-            render_view_scene(view, fb);
-        }
+    bool need_action = false;
+    for (auto &sv : views) {
+      need_action |= (sv.view == view);
     }
 
-    /* delete all views matching the given criteria, skipping the first "start" views
-     * */
-    void cleanup_views(std::function<bool(QWFOverviewView&)> criteria)
-    {
-        auto it = views.begin();
-        while (it != views.end())
-        {
-            if (criteria(*it))
-            {
-                it = views.erase(it);
-            } else
-            {
-                ++it;
-            }
-        }
+    // don't do anything if we're not using this view
+    if (!need_action) {
+      return;
     }
 
-    void fini() override
-    {
-        if (output->is_plugin_active(grab_interface.name))
-        {
-            input_grab->ungrab_input();
-            deinit_overview();
-        }
+    if (active) {
+      arrange();
+    } else {
+      cleanup_views([=](QWFOverviewView &sv) { return sv.view == view; });
     }
+  }
+
+  bool handle_overview_open() {
+    if (get_workspace_views().empty()) {
+      return false;
+    }
+
+    // if we haven't grabbed, then we haven't setup anything
+    if (!output->is_plugin_active(grab_interface.name)) {
+      if (!init_overview()) {
+        return false;
+      }
+    }
+
+    // maybe we're still animating the exit animation from a previous overview activation?
+    if (!active) {
+      LOGI("qwf: opening overview");
+
+      active = true;
+      input_grab->grab_input(wf::scene::layer::OVERLAY);
+      arrange();
+    }
+
+    return true;
+  }
+
+  bool handle_overview_close() {
+    LOGI("qwf: closing overview");
+
+    dearrange();
+    input_grab->ungrab_input();
+    active = false;
+
+    return true;
+  }
+
+  /* Sets up basic hooks needed while overview works and/or displays animations.
+   * Also lower any fullscreen views that are active */
+  bool init_overview() {
+    if (!output->activate_plugin(&grab_interface)) {
+      return false;
+    }
+
+    output->render->add_effect(&pre_hook, wf::OUTPUT_EFFECT_PRE);
+
+    render_node = std::make_shared<overview_render_node_t>(this);
+    wf::scene::add_front(wf::get_core().scene(), render_node);
+    return true;
+  }
+
+  /* The reverse of init_overview */
+  void deinit_overview() {
+    output->deactivate_plugin(&grab_interface);
+
+    output->render->rem_effect(&pre_hook);
+    wf::scene::remove_child(render_node);
+    render_node = nullptr;
+
+    for (auto &view : output->wset()->get_views()) {
+      if (view->has_data("qwf-overview-minimized-showed")) {
+        view->erase_data("qwf-overview-minimized-showed");
+        wf::scene::set_node_enabled(view->get_root_node(), false);
+      }
+
+      view->get_transformed_node()->rem_transformer(window_transformer_name);
+      view->get_transformed_node()->rem_transformer(background_transformer_name);
+    }
+
+    views.clear();
+
+    wf::scene::update(wf::get_core().scene(), wf::scene::update_flag::INPUT_STATE);
+  }
+
+  // TODO this needs some algorithm for placement
+  /* Move view animation target */
+  void move(QWFOverviewView &sv) {
+    // interesting for positioning logic later
+    // auto og   = output->get_relative_geometry();
+    // auto bbox = wf::view_bounding_box_up_to(sv.view, window_transformer_name);
+
+    // these are timed_transition_t
+    // restart_with_end leaves the current state and only sets the end
+
+    constexpr float back_scale = 0.66;
+
+    sv.attribs.scale_x.restart_with_end(sv.attribs.scale_x.end * back_scale);
+    sv.attribs.scale_y.restart_with_end(sv.attribs.scale_y.end * back_scale);
+  }
+
+  // returns a list of mapped views
+  std::vector<wayfire_toplevel_view> get_workspace_views() const {
+    return output->wset()->get_views(wf::WSET_MAPPED_ONLY | wf::WSET_CURRENT_WORKSPACE);
+  }
+
+  /* Create the initial arrangement on the screen
+   * Also sorts the views so the last focused one is at the front */
+  void arrange() {
+    // clear views in case that deinit() hasn't been run
+    views.clear();
+
+    duration.start();
+    background_dim.set(1, background_dim_factor);
+    background_dim_duration.start();
+
+    auto ws_views = get_workspace_views();
+
+    if (ws_views.empty()) {
+      return;
+    }
+
+    for (auto v : ws_views) {
+      views.push_back(create_overview_view(v));
+    }
+
+    std::sort(views.begin(), views.end(), [](QWFOverviewView &a, QWFOverviewView &b) {
+      return wf::get_focus_timestamp(a.view) > wf::get_focus_timestamp(b.view);
+    });
+
+    for (int i = 0; i < (int)views.size(); i++) {
+      move(views[i]);
+    }
+  }
+
+  void dearrange() {
+    for (auto &sv : views) {
+      sv.attribs.off_x.restart_with_end(0);
+      sv.attribs.off_y.restart_with_end(0);
+
+      sv.attribs.scale_x.restart_with_end(1.0);
+      sv.attribs.scale_y.restart_with_end(1.0);
+    }
+
+    background_dim.restart_with_end(1);
+    background_dim_duration.start();
+    duration.start();
+  }
+
+  std::vector<wayfire_view> get_background_views() const {
+    return wf::collect_views_from_output(output, {wf::scene::layer::BACKGROUND, wf::scene::layer::BOTTOM});
+  }
+
+  std::vector<wayfire_view> get_overlay_views() const {
+    return wf::collect_views_from_output(output, {wf::scene::layer::TOP, wf::scene::layer::OVERLAY, wf::scene::layer::DWIDGET});
+  }
+
+  void dim_background(float dim) {
+    for (auto view : get_background_views()) {
+      if (dim == 1.0) {
+        view->get_transformed_node()->rem_transformer(
+            background_transformer_name);
+      } else {
+        auto tr =
+            wf::ensure_named_transformer<wf::scene::view_3d_transformer_t>(
+                view, wf::TRANSFORMER_3D, background_transformer_name,
+                view);
+        tr->color[0] = tr->color[1] = tr->color[2] = dim;
+      }
+    }
+  }
+
+  QWFOverviewView create_overview_view(wayfire_toplevel_view view) {
+    /* we add a view transform if there isn't any.
+     *
+     * Note that a view might be visible on more than 1 place, so damage
+     * tracking doesn't work reliably. To circumvent this, we simply damage
+     * the whole output */
+    if (!view->get_transformed_node()->get_transformer(window_transformer_name)) {
+      if (view->minimized) {
+        wf::scene::set_node_enabled(view->get_root_node(), true);
+        view->store_data(std::make_unique<wf::custom_data_t>(), "qwf-overview-minimized-showed");
+      }
+
+      view->get_transformed_node()->add_transformer(
+          std::make_shared<wf::scene::view_2d_transformer_t>(view),
+          wf::TRANSFORMER_2D, window_transformer_name);
+    }
+
+    QWFOverviewView sw{duration};
+    sw.view = view;
+
+    return sw;
+  }
+
+  void render_view_scene(wayfire_view view, const wf::render_target_t &buffer) {
+    std::vector<wf::scene::render_instance_uptr> instances;
+    view->get_transformed_node()->gen_render_instances(instances, [](auto) {});
+
+    wf::scene::render_pass_params_t params;
+    params.instances = &instances;
+    params.damage = view->get_transformed_node()->get_bounding_box();
+    params.reference_output = this->output;
+    params.target = buffer;
+    wf::scene::run_render_pass(params, 0);
+  }
+
+  void render_view(const QWFOverviewView &sv, const wf::render_target_t &buffer) {
+    auto transform = sv.view->get_transformed_node()
+                         ->get_transformer<wf::scene::view_2d_transformer_t>(window_transformer_name);
+    assert(transform);
+
+    transform->translation_x = sv.attribs.off_x;
+    transform->translation_y = sv.attribs.off_y;
+
+    transform->scale_x = sv.attribs.scale_x;
+    transform->scale_y = sv.attribs.scale_y;
+
+    render_view_scene(sv.view, buffer);
+  }
+
+  void render(const wf::render_target_t &fb) {
+    OpenGL::render_begin(fb);
+    OpenGL::clear({0, 0, 0, 1});
+    OpenGL::render_end();
+
+    for (auto view : get_background_views()) {
+      render_view_scene(view, fb);
+    }
+
+    for (auto view : views) {
+      render_view(view, fb);
+    }
+
+    for (auto view : get_overlay_views()) {
+      render_view_scene(view, fb);
+    }
+  }
+
+  /* Delete all views matching the given criteria */
+  void cleanup_views(std::function<bool(QWFOverviewView &)> criteria) {
+    auto it = views.begin();
+    while (it != views.end()) {
+      if (criteria(*it)) {
+        it = views.erase(it);
+      } else {
+        ++it;
+      }
+    }
+  }
+
+  void fini() override {
+    if (output->is_plugin_active(grab_interface.name)) {
+      input_grab->ungrab_input();
+      deinit_overview();
+    }
+  }
 };
 
 DECLARE_WAYFIRE_PLUGIN(wf::per_output_plugin_t<QWFOverview>);
