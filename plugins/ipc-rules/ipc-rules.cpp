@@ -179,7 +179,6 @@ class ipc_rules_t : public wf::plugin_interface_t,
     {
         auto id = wf::ipc::json_get_uint64(data, "id");
         auto output_id = wf::ipc::json_get_optional_uint64(data, "output_id");
-
         if (data.has_member("geometry") && !data["geometry"].is_object())
         {
             return wf::ipc::json_error("invalid geometry");
@@ -223,6 +222,18 @@ class ipc_rules_t : public wf::plugin_interface_t,
         if (sticky.has_value())
         {
             toplevel->set_sticky(sticky.value());
+        }
+
+        // TODO does it make sense to put this in ipc-rules as part of configure_view? when would you put it in wm_actions?
+        auto allowed_actions = wf::ipc::json_get_optional_uint64(data, "allowed_actions");
+        if (allowed_actions.has_value())
+        {
+            if (*allowed_actions > wf::VIEW_ALLOW_ALL)
+            {
+                return wf::ipc::json_error("invalid mask for allowed_actions");
+            }
+
+            toplevel->set_allowed_actions(*allowed_actions);
         }
 
         return wf::ipc::json_ok();
