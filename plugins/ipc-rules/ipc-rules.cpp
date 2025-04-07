@@ -179,6 +179,8 @@ class ipc_rules_t : public wf::plugin_interface_t,
         WFJSON_OPTIONAL_FIELD(data, "output_id", number_integer);
         WFJSON_OPTIONAL_FIELD(data, "geometry", object);
         WFJSON_OPTIONAL_FIELD(data, "sticky", boolean);
+        // TODO does it make sense to put this in ipc-rules as part of configure_view? when would you put it in wm_actions?
+        WFJSON_OPTIONAL_FIELD(data, "allowed_actions", number_integer);
 
         auto view = wf::ipc::find_view_by_id(data["id"]);
         if (!view)
@@ -217,6 +219,17 @@ class ipc_rules_t : public wf::plugin_interface_t,
         if (data.contains("sticky"))
         {
             toplevel->set_sticky(data["sticky"]);
+        }
+
+        if (data.contains("allowed_actions"))
+        {
+            uint32_t allowed_actions = data["allowed_actions"];
+            if (allowed_actions > wf::VIEW_ALLOW_ALL)
+            {
+                return wf::ipc::json_error("invalid mask for allowed_actions");
+            }
+
+            toplevel->set_allowed_actions(data["allowed_actions"]);
         }
 
         return wf::ipc::json_ok();
