@@ -96,6 +96,21 @@
             mainProgram = "wayfire";
           };
         };
+        packages.wcm = (pkgs.wayfirePlugins.wcm.override {wayfire = packages.wayfire;}) .overrideAttrs (old: rec {
+          version = "0.10.0";
+
+          src = pkgs.fetchFromGitHub {
+            owner = "WayfireWM";
+            repo = "wcm";
+            rev = "v${version}";
+            fetchSubmodules = true;
+            hash = "sha256-O4BYwb+GOMZIn3I2B/WMJ5tUZlaegvwBuyNK9l/gxvQ=";
+          };
+
+          # remove wf-shell since we don't use it
+          buildInputs = (old.buildInputs ++ [pkgs.glm]) |> lib.remove pkgs.wayfirePlugins.wf-shell;
+          mesonFlags = ["-Dwf_shell=disabled"];
+        });
         packages.default = packages.wayfire;
 
         formatter = pkgs.alejandra;
