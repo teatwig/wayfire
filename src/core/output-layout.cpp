@@ -526,7 +526,7 @@ struct output_layout_output_t
         state.position = position_opt;
 
         wf::output_config::mode_t mode = mode_opt;
-        wlr_output_mode tmp;
+        wlr_output_mode tmp{};
 
         switch (mode.get_type())
         {
@@ -624,6 +624,7 @@ struct output_layout_output_t
 
         wf::output_removed_signal data2;
         data2.output = wo;
+        wo->emit(&data2);
         get_core().output_layout->emit(&data2);
         this->output = nullptr;
     }
@@ -990,8 +991,8 @@ struct output_layout_output_t
             pending_state.commit(handle);
 
             ensure_wayfire_output(get_effective_size());
-            output->render->damage_whole();
             emit_configuration_changed(changed_fields);
+            output->render->damage_whole();
         } else /* state.source == OUTPUT_IMAGE_SOURCE_MIRROR */
         {
             destroy_wayfire_output();
