@@ -51,7 +51,7 @@
             libjpeg
             libxkbcommon
             wayland-protocols
-            xorg.xcbutilwm
+            xcbutilwm
 
             libxml2
             yyjson
