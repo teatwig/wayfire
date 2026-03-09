@@ -177,22 +177,24 @@ class wayfire_resize : public wf::per_output_plugin_instance_t, public wf::point
     /* Calculate resize edges, grab starts at (sx, sy), view's geometry is vg */
     uint32_t calculate_edges(wf::geometry_t vg, int sx, int sy)
     {
+        // cursor offset relativ to view origin
         int view_x = sx - vg.x;
         int view_y = sy - vg.y;
 
+        // this breaks on bottom-left, bottom and right edges?
         uint32_t edges = 0;
-        if (view_x < vg.width / 2)
+        if (view_x < vg.width / 3)
         {
             edges |= WLR_EDGE_LEFT;
-        } else
+        } else if (view_x > vg.width / 1.5)
         {
             edges |= WLR_EDGE_RIGHT;
         }
 
-        if (view_y < vg.height / 2)
+        if (view_y < vg.height / 3)
         {
             edges |= WLR_EDGE_TOP;
-        } else
+        } else if (view_y > vg.height / 1.5)
         {
             edges |= WLR_EDGE_BOTTOM;
         }
