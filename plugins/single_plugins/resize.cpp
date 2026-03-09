@@ -7,6 +7,7 @@
 #include <wayfire/per-output-plugin.hpp>
 #include <wayfire/output.hpp>
 #include <wayfire/view.hpp>
+#include <wayfire/workarea.hpp>
 #include <wayfire/core.hpp>
 #include <wayfire/workspace-set.hpp>
 #include <linux/input.h>
@@ -368,6 +369,7 @@ class wayfire_resize : public wf::per_output_plugin_instance_t, public wf::point
 
     void input_motion()
     {
+        auto workarea = output->workarea->get_workarea();
         auto input = get_input_coords();
         int dx     = input.x - grab_start.x;
         int dy     = input.y - grab_start.y;
@@ -381,19 +383,24 @@ class wayfire_resize : public wf::per_output_plugin_instance_t, public wf::point
 
         if (edges & WLR_EDGE_LEFT)
         {
+            // make sure we can't resize past the usable screen area
+            dx = std::max(workarea.x - grabbed_geometry.x, dx);
             desired.x     += dx;
             desired.width -= dx;
         } else if (edges & WLR_EDGE_RIGHT)
         {
+            dx = std::min((workarea.x + workarea.width) - (grabbed_geometry.x + grabbed_geometry.width), dx);
             desired.width += dx;
         }
 
         if (edges & WLR_EDGE_TOP)
         {
+            dy = std::max(workarea.y - grabbed_geometry.y, dy);
             desired.y += dy;
             desired.height -= dy;
         } else if (edges & WLR_EDGE_BOTTOM)
         {
+            dy = std::min((workarea.y + workarea.height) - (grabbed_geometry.y + grabbed_geometry.height), dy);
             desired.height += dy;
         }
 
