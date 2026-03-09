@@ -7,6 +7,7 @@
 #include <wayfire/per-output-plugin.hpp>
 #include <wayfire/output.hpp>
 #include <wayfire/view.hpp>
+#include <wayfire/workarea.hpp>
 #include <wayfire/core.hpp>
 #include <wayfire/workspace-set.hpp>
 #include <linux/input.h>
@@ -178,22 +179,23 @@ class wayfire_resize : public wf::per_output_plugin_instance_t, public wf::point
     {
         int sx     = (int)input.x;
         int sy     = (int)input.y;
+        // cursor offset relativ to view origin
         int view_x = sx - vg.x;
         int view_y = sy - vg.y;
 
         uint32_t edges = 0;
-        if (view_x < vg.width / 2)
+        if (view_x < vg.width / 3)
         {
             edges |= WLR_EDGE_LEFT;
-        } else
+        } else if (view_x > vg.width / 1.5)
         {
             edges |= WLR_EDGE_RIGHT;
         }
 
-        if (view_y < vg.height / 2)
+        if (view_y < vg.height / 3)
         {
             edges |= WLR_EDGE_TOP;
-        } else
+        } else if (view_y > vg.height / 1.5)
         {
             edges |= WLR_EDGE_BOTTOM;
         }
@@ -368,6 +370,7 @@ class wayfire_resize : public wf::per_output_plugin_instance_t, public wf::point
 
     void input_motion()
     {
+        auto workarea = output->workarea->get_workarea();
         auto input = get_input_coords();
         int dx     = (int)input.x - (int)grab_start.x;
         int dy     = (int)input.y - (int)grab_start.y;
@@ -381,19 +384,24 @@ class wayfire_resize : public wf::per_output_plugin_instance_t, public wf::point
 
         if (edges & WLR_EDGE_LEFT)
         {
+            // make sure we can't resize past the usable screen area
+            dx = std::max((int)(workarea.x - grabbed_geometry.x), dx);
             desired.x     += dx;
             desired.width -= dx;
         } else if (edges & WLR_EDGE_RIGHT)
         {
+            dx = std::min((int)((workarea.x + workarea.width) - (grabbed_geometry.x + grabbed_geometry.width)), dx);
             desired.width += dx;
         }
 
         if (edges & WLR_EDGE_TOP)
         {
+            dy = std::max((int)(workarea.y - grabbed_geometry.y), dy);
             desired.y += dy;
             desired.height -= dy;
         } else if (edges & WLR_EDGE_BOTTOM)
         {
+            dy = std::min((int)((workarea.y + workarea.height) - (grabbed_geometry.y + grabbed_geometry.height)), dy);
             desired.height += dy;
         }
 
