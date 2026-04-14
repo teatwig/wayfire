@@ -182,20 +182,19 @@ class wayfire_resize : public wf::per_output_plugin_instance_t, public wf::point
         int view_x = sx - vg.x;
         int view_y = sy - vg.y;
 
-        // this breaks on bottom-left, bottom and right edges?
         uint32_t edges = 0;
-        if (view_x < vg.width / 3)
+        if (view_x < vg.width * 0.25)
         {
             edges |= WLR_EDGE_LEFT;
-        } else if (view_x > vg.width / 1.5)
+        } else if (view_x > vg.width * 0.75)
         {
             edges |= WLR_EDGE_RIGHT;
         }
 
-        if (view_y < vg.height / 3)
+        if (view_y < vg.height * 0.25)
         {
             edges |= WLR_EDGE_TOP;
-        } else if (view_y > vg.height / 1.5)
+        } else if (view_y > vg.height * 0.75)
         {
             edges |= WLR_EDGE_BOTTOM;
         }
