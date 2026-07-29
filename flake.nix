@@ -66,14 +66,26 @@
             vulkan-headers
 
             glm # for wf-config
+            # wlroots deps
+            glslang
+            hwdata
+            lcms
+            libdisplay-info
+            libgbm
+            libliftoff
+            libxcb-errors
+            libxcb-render-util
+            seatd
+            xwayland
           ];
 
           propagatedBuildInputs = with pkgs; [
             # wf-config
-            wlroots_0_20
+            # wlroots_0_20
             wayland
             cairo
             pango
+            vulkan-loader # for vulkan-effects
           ];
 
           nativeCheckInputs = with pkgs; [
@@ -88,8 +100,8 @@
 
           mesonFlags = with pkgs; [
             "--sysconfdir /etc"
-            "-Duse_system_wlroots=enabled"
-            # "-Duse_system_wfconfig=enabled"
+            "-Dvulkan_effects=true"
+            "-Duse_system_wlroots=disabled"
             "-Duse_system_wfconfig=disabled"
             (lib.mesonEnable "wf-touch:tests" (stdenv.buildPlatform.canExecute stdenv.hostPlatform))
           ];
